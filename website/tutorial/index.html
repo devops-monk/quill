@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Tutorial: MySQL and AI in Quill</title>
-  <meta name="description" content="Step by step: load a sample MySQL database, connect Quill, set up an AI model (Claude, OpenAI, OpenRouter, LiteLLM or Ollama) and ask questions in plain English." />
+  <title>Get started with Quill</title>
+  <meta name="description" content="Connect a MySQL database to Quill, choose an AI model, and ask your data questions in plain English. No SQL needed." />
   <meta name="theme-color" content="#F7F8FC" />
   <link rel="icon" type="image/svg+xml" href="../assets/quill-icon.svg" />
   <link rel="icon" type="image/png" href="../assets/favicon.png" />
@@ -24,149 +24,177 @@
       <nav aria-label="Sections">
         <a href="../#how">How it works</a>
         <a href="../#client">Client</a>
-        <a href="./" aria-current="page">Tutorial</a>
+        <a href="./" aria-current="page">Get started</a>
       </nav>
       <a class="nav-cta" href="../#download">Download</a>
     </div>
   </header>
 
-  <main id="main" class="tutorial">
-    <header class="tutorial-head">
-      <h1>MySQL and AI, step by step</h1>
-      <p class="section-lede">In about fifteen minutes you’ll load a sample shop database into MySQL, connect Quill to it, pick an AI model and ask your data questions in plain English.</p>
-    </header>
+  <main id="main" class="guide">
+    <section class="guide-hero">
+      <img src="../assets/quill-icon.svg" alt="" width="88" height="88" />
+      <h1>Ask your database anything.</h1>
+      <p class="guide-lede">Connect a MySQL database, choose an AI model, and ask questions in plain English. No SQL needed.</p>
+      <ol class="parts" aria-label="Three parts">
+        <li><a href="#connect"><span class="part-n">1</span><span class="part-t">Connect your database</span></a></li>
+        <li><a href="#ai"><span class="part-n">2</span><span class="part-t">Choose your AI</span></a></li>
+        <li><a href="#ask"><span class="part-n">3</span><span class="part-t">Ask questions</span></a></li>
+      </ol>
+      <p class="guide-meta">About 10 minutes. You’ll need Quill installed. <a href="../#download">Download it here</a>.</p>
+    </section>
 
-    <div class="tutorial-layout">
-      <nav class="toc" aria-label="Steps">
-        <ol>
-          <li><a href="#install">Install Quill</a></li>
-          <li><a href="#mysql">Start MySQL</a></li>
-          <li><a href="#data">Load the sample data</a></li>
-          <li><a href="#connect">Connect Quill</a></li>
-          <li><a href="#explore">Look around</a></li>
-          <li><a href="#ai">Choose an AI model</a></li>
-          <li><a href="#ask">Ask your first question</a></li>
-          <li><a href="#better">Get better answers</a></li>
-          <li><a href="#safety">Keep your data safe</a></li>
-          <li><a href="#trouble">Troubleshooting</a></li>
-        </ol>
-      </nav>
+    <!-- Part 1 -->
+    <section class="part" id="connect" aria-labelledby="connect-title">
+      <header class="part-head">
+        <span class="part-badge">1</span>
+        <h2 id="connect-title">Connect your database</h2>
+        <p>Quill works with nearly 90 kinds of databases. This guide uses MySQL. The steps are the same for the others.</p>
+      </header>
 
-      <article class="steps">
-        <section id="install" class="step-block">
-          <h2><span class="n">1</span>Install Quill</h2>
-          <p>Download the installer for your computer from the <a href="../#download">download section</a> and open it.</p>
-          <ul>
-            <li><strong>macOS:</strong> open the <code>.dmg</code> and drag Quill to Applications. If macOS says the app can’t be checked, right-click Quill and choose <em>Open</em> the first time.</li>
-            <li><strong>Windows:</strong> run the <code>-setup.exe</code>. If SmartScreen appears, choose <em>More info</em> and then <em>Run anyway</em>.</li>
-            <li><strong>Linux:</strong> use the <code>.AppImage</code> (make it executable with <code>chmod +x</code>), or install the <code>.deb</code> or <code>.rpm</code>.</li>
-          </ul>
-        </section>
+      <article class="gstep">
+        <div class="gstep-text">
+          <h3>Choose MySQL</h3>
+          <p>Click <b>New Connection</b> at the top of the window. Choose <b>MySQL</b>, then click <b>Next</b>.</p>
+        </div>
+        <figure class="gstep-shot"><img src="img/choose-mysql.webp" alt="The New Connection window with MySQL selected among database types" width="1600" height="1309" loading="lazy" /></figure>
+      </article>
 
-        <section id="mysql" class="step-block">
-          <h2><span class="n">2</span>Start MySQL</h2>
-          <p>Already have a MySQL server you can use? Skip ahead to <a href="#data">step 3</a>. Otherwise, the quickest way is <a href="https://www.docker.com/products/docker-desktop/">Docker</a>. This starts MySQL 8.4 with an empty database called <code>shop</code>:</p>
-          <pre class="code"><code>docker run --name quill-mysql \
-  -e MYSQL_ROOT_PASSWORD=quill \
-  -e MYSQL_DATABASE=shop \
-  -p 3306:3306 -d mysql:8.4</code></pre>
-          <p>Give it about 15 seconds to start. If Docker says port 3306 is already in use, another MySQL is running on your computer: replace <code>-p 3306:3306</code> with <code>-p 3307:3306</code> and use port 3307 in the steps below.</p>
-        </section>
+      <article class="gstep">
+        <div class="gstep-text">
+          <h3>Enter your details</h3>
+          <p>Give the connection a name you’ll recognize, like “Shop”. Then fill in the details for your database. Whoever looks after your database, such as your IT team or hosting provider, can give you these.</p>
+          <dl class="glossary">
+            <div><dt>Host</dt><dd>The address of the database server. On your own computer it’s <code>127.0.0.1</code>.</dd></div>
+            <div><dt>Port</dt><dd>Usually <code>3306</code> for MySQL.</dd></div>
+            <div><dt>User and password</dt><dd>Your database login.</dd></div>
+            <div><dt>Database</dt><dd>Which database to open, for example <code>shop</code>.</dd></div>
+          </dl>
+        </div>
+        <figure class="gstep-shot"><img src="img/connection-form.webp" alt="The MySQL connection form filled in with the name Shop, host 127.0.0.1, port 3306, user root and database shop" width="1320" height="1600" loading="lazy" /></figure>
+      </article>
 
-        <section id="data" class="step-block">
-          <h2><span class="n">3</span>Load the sample data</h2>
-          <p>The sample is a small online shop: 60 customers, 10 products, 400 orders with their line items, payments and reviews. Tables and columns have comments, which helps the AI understand them.</p>
-          <p><a class="button primary small" href="shop-mysql.sql" download>Download shop-mysql.sql</a></p>
-          <p>Load it into the container from the folder where you saved it:</p>
-          <pre class="code"><code>docker exec -i quill-mysql mysql -uroot -pquill shop &lt; shop-mysql.sql</code></pre>
-          <p>Using your own MySQL server instead? Create the database first, then load the file:</p>
-          <pre class="code"><code>mysql -h 127.0.0.1 -u root -p -e "CREATE DATABASE shop"
-mysql -h 127.0.0.1 -u root -p shop &lt; shop-mysql.sql</code></pre>
-        </section>
+      <article class="gstep">
+        <div class="gstep-text">
+          <h3>Test, then connect</h3>
+          <p>Click <b>Test</b>. When you see <b>Connection successful</b>, click <b>Save &amp; Connect</b>. Your database now appears in the list on the left.</p>
+        </div>
+        <figure class="gstep-shot strip"><img src="img/test-ok.webp" alt="The bottom of the connection window showing Connection successful next to the Test and Save &amp; Connect buttons" width="1320" height="140" loading="lazy" /></figure>
+      </article>
 
-        <section id="connect" class="step-block">
-          <h2><span class="n">4</span>Connect Quill</h2>
-          <ol class="sub">
-            <li>Click <strong>New Connection</strong> in the toolbar and choose <strong>MySQL</strong>.</li>
-            <li>Fill in the fields:
-              <table class="fields">
-                <tr><th scope="row">Name</th><td>Shop (MySQL)</td></tr>
-                <tr><th scope="row">Host</th><td><code>127.0.0.1</code></td></tr>
-                <tr><th scope="row">Port</th><td><code>3306</code> (or <code>3307</code> if you changed it)</td></tr>
-                <tr><th scope="row">Username</th><td><code>root</code></td></tr>
-                <tr><th scope="row">Password</th><td><code>quill</code></td></tr>
-                <tr><th scope="row">Database</th><td><code>shop</code></td></tr>
-              </table>
-            </li>
-            <li>Click <strong>Test</strong>. When it succeeds, click <strong>Save</strong>.</li>
+      <aside class="sample" aria-labelledby="sample-title">
+        <div class="sample-text">
+          <h3 id="sample-title">No data yet? Use our sample shop.</h3>
+          <p>It’s a small online store with customers, products, orders, payments and reviews, so you can try everything safely.</p>
+          <ol class="mini-steps">
+            <li><a href="shop-mysql.sql" download>Download the sample shop</a>.</li>
+            <li>In Quill, right-click your database and choose <b>SQL and code</b>, then <b>Execute SQL File</b>.</li>
+            <li>Click <b>Browse</b>, choose the file you downloaded, then click <b>Execute</b>.</li>
           </ol>
-          <p class="note">For a server on another machine, use its address as the host. If it’s only reachable over SSH, add an SSH tunnel in the same dialog.</p>
-        </section>
+        </div>
+        <div class="sample-shots">
+          <img src="img/sql-file-menu.webp" alt="Right-click menu on a database showing SQL and code, then Execute SQL File" width="1040" height="920" loading="lazy" />
+          <img src="img/import-file.webp" alt="The Execute SQL File window with the sample file selected and a preview of its contents" width="1600" height="1496" loading="lazy" />
+        </div>
+      </aside>
 
-        <section id="explore" class="step-block">
-          <h2><span class="n">5</span>Look around</h2>
-          <p>Double-click <strong>Shop (MySQL)</strong> in the sidebar, then expand <strong>shop</strong> and <strong>Tables</strong>.</p>
-          <ul>
-            <li>Double-click <code>orders</code> to browse rows. Filter with <strong>WHERE</strong>, sort with <strong>ORDER BY</strong>.</li>
-            <li>Click <strong>New Query</strong> to write SQL yourself. Run it with <kbd>⌘</kbd> <kbd>Enter</kbd> on macOS or <kbd>Ctrl</kbd> <kbd>Enter</kbd> on Windows and Linux, then switch the result to <strong>Chart</strong>.</li>
-            <li>Right-click the <code>shop</code> database, open <strong>Structure tools</strong> and choose <strong>View Diagram</strong> to see how the tables connect.</li>
-          </ul>
-          <figure class="shot">
-            <img src="../assets/screens/diagram.webp" alt="Relationship diagram of the shop database: customers, orders, order_items, payments, products and reviews, linked by foreign keys" width="2000" height="1206" loading="lazy" />
-          </figure>
-        </section>
+      <article class="gstep wide">
+        <div class="gstep-text">
+          <h3>Have a look around</h3>
+          <p>Open your database and its <b>Tables</b> in the list on the left. Double-click a table to see its rows. Nothing you look at changes your data.</p>
+        </div>
+        <figure class="gstep-shot"><img src="img/browse-orders.webp" alt="Quill showing the orders table of the shop database with its rows" width="2000" height="1206" loading="lazy" /></figure>
+      </article>
+    </section>
 
-        <section id="ai" class="step-block">
-          <h2><span class="n">6</span>Choose an AI model</h2>
-          <p>Open <strong>Settings</strong> (the gear in the top-right corner), go to <strong>AI</strong> and click <strong>Add Config</strong>. Pick a <strong>Provider</strong>, give the config a name, and fill in <strong>Endpoint</strong>, <strong>API Key</strong> and <strong>Default Model</strong>. Then click <strong>Save</strong>.</p>
-          <p>Pick whichever suits you. Each one below is complete on its own.</p>
+    <!-- Part 2 -->
+    <section class="part tinted" id="ai" aria-labelledby="ai-title">
+      <header class="part-head">
+        <span class="part-badge">2</span>
+        <h2 id="ai-title">Choose your AI</h2>
+        <p>Quill works with the AI service you prefer. Pick one below, or ask your IT team which one your company uses.</p>
+      </header>
 
-          <div class="providers" data-providers>
-            <div class="segments" role="tablist" aria-label="AI providers">
-              <button role="tab" type="button" id="tab-claude" aria-controls="p-claude" aria-selected="true">Claude</button>
-              <button role="tab" type="button" id="tab-openai" aria-controls="p-openai" aria-selected="false">OpenAI</button>
-              <button role="tab" type="button" id="tab-openrouter" aria-controls="p-openrouter" aria-selected="false">OpenRouter</button>
-              <button role="tab" type="button" id="tab-litellm" aria-controls="p-litellm" aria-selected="false">LiteLLM</button>
-              <button role="tab" type="button" id="tab-ollama" aria-controls="p-ollama" aria-selected="false">Ollama</button>
-            </div>
+      <article class="gstep">
+        <div class="gstep-text">
+          <h3>Open AI settings</h3>
+          <p>Click the gear in the top-right corner, then <b>AI</b>, then <b>Add Config</b>. Choose your AI service from the <b>Provider</b> list.</p>
+        </div>
+        <figure class="gstep-shot narrow"><img src="img/providers.webp" alt="The Provider list in Quill's AI settings: Claude, OpenAI, Gemini, DeepSeek, Ollama and others" width="430" height="740" loading="lazy" /></figure>
+      </article>
 
-            <div class="provider" role="tabpanel" id="p-claude" aria-labelledby="tab-claude">
-              <h3>Claude (Anthropic)</h3>
-              <p>Strong at reading schemas and writing correct SQL. Create a key at <a href="https://console.anthropic.com/">console.anthropic.com</a>.</p>
-              <table class="fields">
-                <tr><th scope="row">Provider</th><td>Claude</td></tr>
-                <tr><th scope="row">Endpoint</th><td>Keep the default, <code>https://api.anthropic.com/v1/messages</code></td></tr>
-                <tr><th scope="row">API Key</th><td>Your Anthropic key (starts with <code>sk-ant-</code>)</td></tr>
-                <tr><th scope="row">Default Model</th><td><code>claude-sonnet-5-5</code>, or choose from the list</td></tr>
-              </table>
-            </div>
+      <div class="choices" data-providers>
+        <div class="segments" role="tablist" aria-label="AI services">
+          <button role="tab" type="button" id="tab-claude" aria-controls="p-claude" aria-selected="true">Claude</button>
+          <button role="tab" type="button" id="tab-openai" aria-controls="p-openai" aria-selected="false">OpenAI</button>
+          <button role="tab" type="button" id="tab-ollama" aria-controls="p-ollama" aria-selected="false">Ollama</button>
+          <button role="tab" type="button" id="tab-openrouter" aria-controls="p-openrouter" aria-selected="false">OpenRouter</button>
+          <button role="tab" type="button" id="tab-litellm" aria-controls="p-litellm" aria-selected="false">LiteLLM</button>
+        </div>
 
-            <div class="provider" role="tabpanel" id="p-openai" aria-labelledby="tab-openai" hidden>
-              <h3>OpenAI</h3>
-              <p>Create a key at <a href="https://platform.openai.com/api-keys">platform.openai.com/api-keys</a>.</p>
-              <table class="fields">
-                <tr><th scope="row">Provider</th><td>OpenAI</td></tr>
-                <tr><th scope="row">Endpoint</th><td>Keep the default, <code>https://api.openai.com/v1/chat/completions</code></td></tr>
-                <tr><th scope="row">API Key</th><td>Your OpenAI key (starts with <code>sk-</code>)</td></tr>
-                <tr><th scope="row">Default Model</th><td>Choose from the list Quill loads with your key</td></tr>
-              </table>
-            </div>
+        <div class="choice" role="tabpanel" id="p-claude" aria-labelledby="tab-claude">
+          <div class="choice-text">
+            <h3>Claude</h3>
+            <p class="choice-why">Best for accurate answers. Made by Anthropic.</p>
+            <ol class="mini-steps">
+              <li>Get a key at <a href="https://console.anthropic.com/">console.anthropic.com</a>.</li>
+              <li>Set <b>Provider</b> to Claude and paste the key into <b>API Key</b>.</li>
+              <li>Set <b>Default Model</b> to <code>claude-sonnet-5-5</code>.</li>
+            </ol>
+          </div>
+          <figure class="gstep-shot"><img src="img/provider-claude.webp" alt="AI settings filled in for Claude: name Claude, an API key, and the model claude-sonnet-5-5" width="1600" height="679" loading="lazy" /></figure>
+        </div>
 
-            <div class="provider" role="tabpanel" id="p-openrouter" aria-labelledby="tab-openrouter" hidden>
-              <h3>OpenRouter</h3>
-              <p>One key for models from many companies. Create a key at <a href="https://openrouter.ai/keys">openrouter.ai/keys</a> and find model IDs at <a href="https://openrouter.ai/models">openrouter.ai/models</a>.</p>
-              <table class="fields">
-                <tr><th scope="row">Provider</th><td>OpenAI Compatible</td></tr>
-                <tr><th scope="row">Endpoint</th><td><code>https://openrouter.ai/api/v1</code></td></tr>
-                <tr><th scope="row">API Key</th><td>Your OpenRouter key (starts with <code>sk-or-</code>)</td></tr>
-                <tr><th scope="row">Default Model</th><td>A model ID from OpenRouter, written as <code>company/model</code></td></tr>
-              </table>
-              <p class="note">Pick a model that supports tool calling. Quill’s agent uses tools to read the schema and run queries.</p>
-            </div>
+        <div class="choice" role="tabpanel" id="p-openai" aria-labelledby="tab-openai" hidden>
+          <div class="choice-text">
+            <h3>OpenAI</h3>
+            <p class="choice-why">The company behind ChatGPT.</p>
+            <ol class="mini-steps">
+              <li>Get a key at <a href="https://platform.openai.com/api-keys">platform.openai.com</a>.</li>
+              <li>Set <b>Provider</b> to OpenAI and paste the key into <b>API Key</b>.</li>
+              <li>Pick a <b>Default Model</b> from the list Quill shows you.</li>
+            </ol>
+          </div>
+          <figure class="gstep-shot"><img src="img/provider-openai.webp" alt="AI settings filled in for OpenAI with an API key and a model" width="1600" height="679" loading="lazy" /></figure>
+        </div>
 
-            <div class="provider" role="tabpanel" id="p-litellm" aria-labelledby="tab-litellm" hidden>
-              <h3>LiteLLM</h3>
-              <p><a href="https://docs.litellm.ai/">LiteLLM</a> is a proxy that puts many providers behind one OpenAI-style API. Use it to route between models, track spend, or keep keys on a server. Install it and write a small config:</p>
+        <div class="choice" role="tabpanel" id="p-ollama" aria-labelledby="tab-ollama" hidden>
+          <div class="choice-text">
+            <h3>Ollama</h3>
+            <p class="choice-why">Free and private. The AI runs on your own computer, so nothing leaves it.</p>
+            <ol class="mini-steps">
+              <li>Install <a href="https://ollama.com/download">Ollama</a> and download a model, such as <code>qwen2.5:7b</code>.</li>
+              <li>Set <b>Provider</b> to Ollama. Leave <b>API Key</b> empty.</li>
+              <li>Set <b>Default Model</b> to the model you downloaded.</li>
+            </ol>
+            <p class="small-note">Smaller models on a laptop are slower and less reliable. For important numbers, use the Query Data option in part 3, or a larger model.</p>
+          </div>
+          <figure class="gstep-shot"><img src="img/provider-ollama.webp" alt="AI settings for Ollama with the model qwen2.5:7b" width="1600" height="1034" loading="lazy" /></figure>
+        </div>
+
+        <div class="choice" role="tabpanel" id="p-openrouter" aria-labelledby="tab-openrouter" hidden>
+          <div class="choice-text">
+            <h3>OpenRouter</h3>
+            <p class="choice-why">One account for models from many companies.</p>
+            <ol class="mini-steps">
+              <li>Get a key at <a href="https://openrouter.ai/keys">openrouter.ai/keys</a>.</li>
+              <li>Set <b>Provider</b> to <b>OpenAI Compatible</b> and <b>Endpoint</b> to <code>https://openrouter.ai/api/v1</code>.</li>
+              <li>Paste your key, and copy a model name from <a href="https://openrouter.ai/models">openrouter.ai/models</a>.</li>
+            </ol>
+          </div>
+          <figure class="gstep-shot"><img src="img/provider-openrouter.webp" alt="AI settings for OpenRouter using OpenAI Compatible with the endpoint https://openrouter.ai/api/v1" width="1600" height="695" loading="lazy" /></figure>
+        </div>
+
+        <div class="choice" role="tabpanel" id="p-litellm" aria-labelledby="tab-litellm" hidden>
+          <div class="choice-text">
+            <h3>LiteLLM</h3>
+            <p class="choice-why">For companies that route AI through their own gateway. Your IT team gives you the details.</p>
+            <ol class="mini-steps">
+              <li>Set <b>Provider</b> to <b>OpenAI Compatible</b>.</li>
+              <li>Set <b>Endpoint</b> to your gateway address, for example <code>http://localhost:4000</code>.</li>
+              <li>Paste the key your IT team gave you and the model name they use.</li>
+            </ol>
+            <details class="for-it">
+              <summary>For your IT team: a minimal LiteLLM setup</summary>
               <pre class="code"><code>pip install 'litellm[proxy]'</code></pre>
               <pre class="code"><code># litellm.yaml
 model_list:
@@ -174,112 +202,132 @@ model_list:
     litellm_params:
       model: anthropic/claude-sonnet-5-5
       api_key: os.environ/ANTHROPIC_API_KEY
-  - model_name: local
-    litellm_params:
-      model: ollama/llama3.1
 
 general_settings:
   master_key: sk-quill-local</code></pre>
-              <pre class="code"><code>export ANTHROPIC_API_KEY=sk-ant-...
-litellm --config litellm.yaml</code></pre>
-              <p>The proxy listens on port 4000. In Quill:</p>
-              <table class="fields">
-                <tr><th scope="row">Provider</th><td>OpenAI Compatible</td></tr>
-                <tr><th scope="row">Endpoint</th><td><code>http://localhost:4000</code></td></tr>
-                <tr><th scope="row">API Key</th><td>The <code>master_key</code> from your config, here <code>sk-quill-local</code></td></tr>
-                <tr><th scope="row">Default Model</th><td>A <code>model_name</code> from your config, such as <code>claude</code></td></tr>
-              </table>
-            </div>
-
-            <div class="provider" role="tabpanel" id="p-ollama" aria-labelledby="tab-ollama" hidden>
-              <h3>Ollama, fully local</h3>
-              <p>Runs the model on your own computer, so neither your questions nor your schema leave it. Install <a href="https://ollama.com/download">Ollama</a>, then download a model that supports tools:</p>
-              <pre class="code"><code>ollama pull llama3.1</code></pre>
-              <p><code>qwen2.5-coder:7b</code> is another good choice for SQL. Larger models give better answers if your computer can run them.</p>
-              <table class="fields">
-                <tr><th scope="row">Provider</th><td>Ollama</td></tr>
-                <tr><th scope="row">Endpoint</th><td>Keep the default, <code>http://localhost:11434/v1</code></td></tr>
-                <tr><th scope="row">API Key</th><td>Leave empty</td></tr>
-                <tr><th scope="row">Default Model</th><td><code>llama3.1</code>, or the model you pulled</td></tr>
-              </table>
-            </div>
+              <pre class="code"><code>litellm --config litellm.yaml   # serves on port 4000</code></pre>
+              <p>In Quill, use the <code>master_key</code> as the API key and <code>claude</code> as the model.</p>
+            </details>
           </div>
-          <p class="note">Quill also has presets for Gemini, DeepSeek, Qwen and others. Any service with an OpenAI-style or Anthropic-style API works through <strong>OpenAI Compatible</strong> or <strong>Anthropic Compatible</strong>.</p>
-        </section>
+          <figure class="gstep-shot"><img src="img/provider-litellm.webp" alt="AI settings for LiteLLM using OpenAI Compatible with the endpoint http://localhost:4000 and the model claude" width="1600" height="695" loading="lazy" /></figure>
+        </div>
+      </div>
 
-        <section id="ask" class="step-block">
-          <h2><span class="n">7</span>Ask your first question</h2>
-          <ol class="sub">
-            <li>Select <strong>Shop (MySQL)</strong> in the sidebar, then open the AI assistant with the robot icon in the toolbar.</li>
-            <li>Switch the assistant to <strong>Agent</strong> mode. In Agent mode it can look at the schema and run read-only queries. In <strong>Ask</strong> mode it only writes SQL for you to run.</li>
-            <li>Type a question:
-              <pre class="code"><code>Which products made the most money this year?</code></pre>
-            </li>
-          </ol>
-          <p>Here’s what happens behind the scenes:</p>
-          <ol class="sub">
-            <li>Quill searches the schema for tables that match your question and follows the foreign keys between them, here <code>products</code>, <code>order_items</code> and <code>orders</code>.</li>
-            <li>The model writes MySQL that joins those tables and runs it read-only.</li>
-            <li>You get the answer in plain words, with the SQL it ran so you can check it.</li>
-          </ol>
-          <p>Then try a few more:</p>
-          <ul class="questions">
-            <li>How many orders did we get each month, and what share was refunded?</li>
-            <li>Who are our top 5 customers by lifetime value, and which country are they in?</li>
-            <li>What’s the average rating for each product category?</li>
-            <li>Which payment method is most popular for orders over $500?</li>
-            <li>Which products are almost out of stock but still selling well?</li>
-          </ul>
-        </section>
-
-        <section id="better" class="step-block">
-          <h2><span class="n">8</span>Get better answers</h2>
-          <ul>
-            <li><strong>Say what you mean by a word.</strong> “Revenue from paid orders only” beats “revenue”.</li>
-            <li><strong>Give a time range.</strong> “In the last 90 days” or “in 2026” avoids guessing.</li>
-            <li><strong>Ask follow-ups.</strong> “Now split that by channel” keeps the context of the last answer.</li>
-            <li><strong>Name a table when you know it.</strong> Type <code>@orders</code> to point the assistant straight at it.</li>
-            <li><strong>Describe your columns.</strong> Comments in the database help, and so do Quill’s schema notes. They are read alongside the schema.</li>
-            <li><strong>Ask about SQL too.</strong> Paste a query and ask Quill to explain it, speed it up, or convert it to another dialect.</li>
-          </ul>
-        </section>
-
-        <section id="safety" class="step-block">
-          <h2><span class="n">9</span>Keep your data safe</h2>
-          <p>The agent runs read-only queries on its own. If a request would change data, it shows you the exact statement and waits for you to approve it.</p>
-          <p>For real databases, give Quill a user that can only read:</p>
-          <pre class="code"><code>CREATE USER 'quill_ai'@'%' IDENTIFIED BY 'choose-a-strong-password';
-GRANT SELECT ON shop.* TO 'quill_ai'@'%';</code></pre>
-          <p>You can also mark a connection as production or read-only in its settings. Only the tables a question needs are sent to your AI provider, and with Ollama nothing leaves your computer.</p>
-        </section>
-
-        <section id="trouble" class="step-block">
-          <h2><span class="n">10</span>Troubleshooting</h2>
-          <dl class="faq">
-            <dt>Docker says port 3306 is already in use</dt>
-            <dd>Another MySQL is running. Start the container with <code>-p 3307:3306</code> and use port 3307 in Quill.</dd>
-            <dt>Test fails with “Access denied”</dt>
-            <dd>Check the username and password. With the Docker command above they are <code>root</code> and <code>quill</code>.</dd>
-            <dt>The assistant says AI isn’t configured</dt>
-            <dd>Add a config under Settings, then AI, and make sure it’s selected in the assistant.</dd>
-            <dt>The AI returns 401 or “invalid API key”</dt>
-            <dd>Copy the key again with no spaces. For LiteLLM, use the <code>master_key</code>, not your Anthropic or OpenAI key.</dd>
-            <dt>The model is “not found”</dt>
-            <dd>Use the exact model ID: from the list in Quill, from OpenRouter’s model page, or a <code>model_name</code> from your LiteLLM config.</dd>
-            <dt>Ollama doesn’t answer</dt>
-            <dd>Make sure Ollama is running (<code>ollama serve</code>) and the model is downloaded (<code>ollama list</code>).</dd>
-            <dt>The answer has SQL but no data</dt>
-            <dd>Switch the assistant to Agent mode, and use a model that supports tool calling.</dd>
-          </dl>
-        </section>
-
-        <section class="step-block finish">
-          <h2>You’re set</h2>
-          <p>Connect your own databases the same way. Quill works with nearly 90 of them, from PostgreSQL and SQL Server to ClickHouse, MongoDB and Snowflake.</p>
-          <p><a class="button primary" href="../#download">Download Quill</a></p>
-        </section>
+      <article class="gstep">
+        <div class="gstep-text">
+          <h3>Test, then apply</h3>
+          <p>Click <b>Test</b> at the bottom. When you see <b>Connection successful</b>, click <b>Apply</b>. You can add more than one and switch between them later.</p>
+        </div>
+        <figure class="gstep-shot strip"><img src="img/ai-test-ok.webp" alt="Connection successful next to the Test button, and the Apply button" width="960" height="110" loading="lazy" /></figure>
       </article>
-    </div>
+    </section>
+
+    <!-- Part 3 -->
+    <section class="part" id="ask" aria-labelledby="ask-title">
+      <header class="part-head">
+        <span class="part-badge">3</span>
+        <h2 id="ask-title">Ask questions</h2>
+        <p>Now the fun part. Ask the way you’d ask a colleague who knows the data.</p>
+      </header>
+
+      <article class="gstep">
+        <div class="gstep-text">
+          <h3>Open the assistant</h3>
+          <p>Select your database on the left, then click the robot icon at the top right.</p>
+          <p>At the bottom of the assistant, choose <b>Agent</b>, then <b>Query Data</b>. In this mode Quill looks up the real numbers instead of guessing.</p>
+        </div>
+        <figure class="gstep-shot narrow"><img src="img/agent-menu.webp" alt="The assistant's mode menu with Agent selected and the Query Data option" width="720" height="640" loading="lazy" /></figure>
+      </article>
+
+      <article class="gstep answer-step">
+        <div class="gstep-text">
+          <h3>Ask in plain English</h3>
+          <p>Type your question and press <b>Enter</b>. For example:</p>
+          <p class="quote">“Which products made the most money this year?”</p>
+          <p>Here’s what Quill did with that question:</p>
+          <ol class="mini-steps">
+            <li><b>Found the right tables.</b> It matched “products” and “money” to the products, orders and order items tables.</li>
+            <li><b>Checked it was safe.</b> The query only reads data, so it ran straight away.</li>
+            <li><b>Answered with real numbers</b> from your database.</li>
+          </ol>
+          <p class="small-note">The answer is from a small AI model running on a laptop. Larger models give richer answers.</p>
+        </div>
+        <figure class="gstep-shot tall"><img src="img/ai-answer.webp" alt="The Quill assistant answering which products made the most money: 4K Monitor 27 inch at $56,917, Ergonomic Chair at $43,928, and more, after the steps search_schema and execute_query" width="720" height="1700" loading="lazy" /></figure>
+      </article>
+
+      <div class="ideas">
+        <h3>Questions to try</h3>
+        <div class="idea-groups">
+          <div>
+            <h4>Sales</h4>
+            <ul>
+              <li>How much did we sell each month this year?</li>
+              <li>What share of orders was refunded?</li>
+              <li>Which sales channel brings in the most revenue?</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Customers</h4>
+            <ul>
+              <li>Who are our 10 best customers?</li>
+              <li>How many customers do we have in each country?</li>
+              <li>Which customers haven’t ordered in 90 days?</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Products</h4>
+            <ul>
+              <li>Which products are almost out of stock?</li>
+              <li>What’s the average review score for each category?</li>
+              <li>Which products get the worst reviews?</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="part tinted" aria-labelledby="tips-title">
+      <header class="part-head">
+        <h2 id="tips-title">Get better answers</h2>
+      </header>
+      <ul class="tips">
+        <li><b>Say what you mean.</b> “Revenue from paid orders only” is clearer than “revenue”.</li>
+        <li><b>Give a time range.</b> “Last 90 days” or “in 2026” avoids guessing.</li>
+        <li><b>Ask follow-ups.</b> “Now split that by country” builds on the last answer.</li>
+        <li><b>Check the numbers that matter.</b> Click the steps above an answer to see exactly what Quill ran.</li>
+      </ul>
+    </section>
+
+    <section class="part" aria-labelledby="safe-title">
+      <header class="part-head">
+        <h2 id="safe-title">Your data stays safe</h2>
+      </header>
+      <ul class="tips">
+        <li><b>Looking is safe.</b> Questions only read your data.</li>
+        <li><b>Changes need your OK.</b> If a request would change or delete anything, Quill shows you exactly what it will do and waits for you to approve.</li>
+        <li><b>Lock it down.</b> Mark a connection as Read Only in its settings, or ask your IT team for a read-only login.</li>
+        <li><b>Keep it private.</b> Only the few tables a question needs are shared with your AI service. With Ollama, nothing leaves your computer.</li>
+      </ul>
+    </section>
+
+    <section class="part tinted" aria-labelledby="help-title">
+      <header class="part-head">
+        <h2 id="help-title">If something doesn’t work</h2>
+      </header>
+      <dl class="faq">
+        <div><dt>Test says it can’t connect</dt><dd>Check the host, port, user and password with whoever looks after the database. If the database is on another network, you may need a VPN or the SSH option in the connection window.</dd></div>
+        <div><dt>The assistant says AI isn’t configured</dt><dd>Add a config in Settings, then AI, and make sure you clicked Apply.</dd></div>
+        <div><dt>The AI says the key is invalid</dt><dd>Copy the key again, without spaces. Keys from your AI service are different from your database password.</dd></div>
+        <div><dt>The answer has SQL but no numbers</dt><dd>Switch the assistant to Agent, then Query Data, and ask again.</dd></div>
+      </dl>
+    </section>
+
+    <section class="guide-end">
+      <img src="../assets/quill-icon.svg" alt="" width="72" height="72" />
+      <h2>You’re ready.</h2>
+      <p>Connect your own databases the same way, from PostgreSQL and SQL Server to Snowflake and MongoDB.</p>
+      <a class="button primary" href="../#download">Download Quill</a>
+    </section>
   </main>
 
   <footer>
