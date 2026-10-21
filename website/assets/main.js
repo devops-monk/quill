@@ -1,3 +1,43 @@
+// Screenshot viewer: segmented tabs swap the image and caption. Arrow keys move
+// between tabs, as in a native segmented control.
+(() => {
+  const viewer = document.querySelector("[data-viewer]");
+  if (!viewer) return;
+  const tabs = [...viewer.querySelectorAll('[role="tab"]')];
+  const img = viewer.querySelector("[data-screen-img]");
+  const caption = viewer.querySelector("[data-screen-caption]");
+
+  // Warm the cache so switching tabs never shows a blank frame.
+  tabs.forEach((tab) => { new Image().src = tab.dataset.src; });
+
+  function select(tab) {
+    tabs.forEach((t) => {
+      const selected = t === tab;
+      t.setAttribute("aria-selected", String(selected));
+      t.tabIndex = selected ? 0 : -1;
+    });
+    img.classList.add("fading");
+    setTimeout(() => {
+      img.src = tab.dataset.src;
+      img.alt = `Quill: ${tab.textContent.toLowerCase()}`;
+      caption.textContent = tab.dataset.caption;
+      img.classList.remove("fading");
+    }, 180);
+  }
+
+  tabs.forEach((tab, index) => {
+    tab.tabIndex = index === 0 ? 0 : -1;
+    tab.addEventListener("click", () => select(tab));
+    tab.addEventListener("keydown", (event) => {
+      const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+      if (!step) return;
+      const next = tabs[(index + step + tabs.length) % tabs.length];
+      next.focus();
+      select(next);
+    });
+  });
+})();
+
 // Hero demo: type the question, then reveal the tables used, the SQL and the
 // answer. Plays once when the window scrolls into view; reduced-motion users
 // see the finished state immediately.

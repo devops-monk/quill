@@ -139,6 +139,43 @@ section h2 { font-size: clamp(2.25rem, 5vw, 3.5rem); line-height: 1.07; }
 .key.named { background: var(--indigo); }
 .key.found { border: 1.5px dashed #8F8AF5; margin-left: 14px; }
 
+/* How it works: a real three-step sequence, so it is numbered */
+.how { padding: 24px 24px 128px; max-width: 1040px; margin: 0 auto; scroll-margin-top: 52px; }
+.how h2 { text-align: center; }
+.how-steps { list-style: none; counter-reset: step; margin: 56px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 48px; }
+.how-steps li { counter-increment: step; }
+.how-steps li::before {
+  content: counter(step); display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%;
+  background: var(--ink); color: var(--white); font-weight: 600; margin-bottom: 18px;
+}
+.how-steps h3 { margin: 0; font-size: 1.375rem; letter-spacing: -0.015em; }
+.how-steps p { margin-top: 10px; color: var(--slate); }
+
+/* Client screenshots */
+.client { background: var(--white); padding: 128px 24px; text-align: center; scroll-margin-top: 52px; }
+.viewer { max-width: 1120px; margin: 44px auto 0; }
+.segments { display: inline-flex; flex-wrap: wrap; justify-content: center; gap: 4px; padding: 4px; border-radius: 999px; background: #EEF0F6; }
+.segments button {
+  font: inherit; font-size: 0.9375rem; font-weight: 500; color: var(--slate); background: none; border: 0;
+  padding: 8px 16px; border-radius: 999px; cursor: pointer;
+}
+.segments button:hover { color: var(--ink); }
+.segments button[aria-selected="true"] { background: var(--white); color: var(--ink); box-shadow: 0 1px 3px rgb(21 24 38 / 0.14); }
+.screen { margin: 32px 0 0; }
+.screen img {
+  width: 100%; height: auto; border-radius: 12px; background: #F1F2F7;
+  box-shadow: 0 0 0 1px rgb(21 24 38 / 0.08), 0 30px 80px -24px rgb(21 24 38 / 0.35);
+  transition: opacity 0.25s ease;
+}
+.screen img.fading { opacity: 0; }
+.screen figcaption { margin: 22px auto 0; max-width: var(--measure); color: var(--slate); min-height: 3em; }
+.features {
+  list-style: none; padding: 0; margin: 72px auto 0; max-width: 1040px; text-align: left;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 36px 48px;
+}
+.features li { color: var(--slate); }
+.features strong { display: block; color: var(--ink); font-size: 1.0625rem; margin-bottom: 4px; }
+
 /* Database wall */
 .databases { padding: 128px 24px; text-align: center; scroll-margin-top: 52px; }
 .wall { max-width: 980px; margin: 56px auto 0; line-height: 1.35; letter-spacing: -0.02em; text-wrap: balance; }
@@ -181,12 +218,15 @@ footer { border-top: 1px solid var(--line); padding: 28px 24px 40px; text-align:
   .window-side { display: none; }
   .window-main { padding: 18px 16px 20px; }
   .bars li { grid-template-columns: 7.5rem 1fr 4rem; gap: 8px; }
-  .dark, .databases, .safety, .private { padding-top: 88px; padding-bottom: 88px; }
+  .dark, .databases, .safety, .private, .client { padding-top: 88px; padding-bottom: 88px; }
+  .how { padding-bottom: 88px; }
+  .how-steps, .features { grid-template-columns: 1fr; gap: 32px; }
+  .segments button { padding: 7px 12px; font-size: 0.875rem; }
   .hero { padding-top: 64px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   .caret { animation: none; }
-  .step, .bar span, .window-side li { transition: none; }
+  .step, .bar span, .window-side li, .screen img { transition: none; }
 }

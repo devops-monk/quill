@@ -24,8 +24,8 @@
         <span>Quill</span>
       </a>
       <nav aria-label="Sections">
-        <a href="#ask">Ask</a>
-        <a href="#schema">Schema</a>
+        <a href="#how">How it works</a>
+        <a href="#client">Client</a>
         <a href="#databases">Databases</a>
         <a href="#safety">Safety</a>
       </nav>
@@ -98,6 +98,24 @@
       <button class="replay" type="button" data-replay hidden>Play again</button>
     </section>
 
+    <section class="how" id="how" aria-labelledby="how-title">
+      <h2 id="how-title">How it works</h2>
+      <ol class="how-steps">
+        <li>
+          <h3>Connect</h3>
+          <p>Add a database the way you would in any client: a host and password, a file, an SSH tunnel or a connection string.</p>
+        </li>
+        <li>
+          <h3>Ask</h3>
+          <p>Type a question in plain words. Quill finds the tables it’s about, follows the foreign keys between them and writes SQL for your database’s dialect.</p>
+        </li>
+        <li>
+          <h3>Check and run</h3>
+          <p>You see the tables it used, the SQL, the rows and a chart. Edit the query, open it in the editor or save it. Changes to data wait for your approval.</p>
+        </li>
+      </ol>
+    </section>
+
     <section class="dark" id="schema">
       <div class="split">
         <div class="copy">
@@ -127,6 +145,34 @@
           <figcaption><span class="key named"></span>Named in your question <span class="key found"></span>Found through foreign keys</figcaption>
         </figure>
       </div>
+    </section>
+
+    <section class="client" id="client" aria-labelledby="client-title">
+      <h2 id="client-title">A full database client underneath.</h2>
+      <p class="section-lede">When you’d rather write the SQL yourself, everything is still here.</p>
+
+      <div class="viewer" data-viewer>
+        <div class="segments" role="tablist" aria-label="Screens">
+          <button role="tab" type="button" aria-selected="true" aria-controls="screen" data-src="assets/screens/grid.webp" data-caption="Browse and edit rows with types, keys, filters and sorting. Edits stay pending until you commit.">Browse data</button>
+          <button role="tab" type="button" aria-selected="false" aria-controls="screen" data-src="assets/screens/query.webp" data-caption="A SQL editor with completion, formatting and explain plans, connected to the database you pick.">Write SQL</button>
+          <button role="tab" type="button" aria-selected="false" aria-controls="screen" data-src="assets/screens/chart.webp" data-caption="Turn any result into a bar, line or pie chart without leaving the query.">Chart results</button>
+          <button role="tab" type="button" aria-selected="false" aria-controls="screen" data-src="assets/screens/diagram.webp" data-caption="See every table and how it relates, drawn from the real foreign keys.">Relationships</button>
+          <button role="tab" type="button" aria-selected="false" aria-controls="screen" data-src="assets/screens/grid-dark.webp" data-caption="Light and dark themes, both tuned for long sessions.">Dark mode</button>
+        </div>
+        <figure class="screen" id="screen" role="tabpanel">
+          <img src="assets/screens/grid.webp" alt="Quill showing the customers table of a shop database in its data grid" width="2000" height="1206" data-screen-img />
+          <figcaption data-screen-caption>Browse and edit rows with types, keys, filters and sorting. Edits stay pending until you commit.</figcaption>
+        </figure>
+      </div>
+
+      <ul class="features">
+        <li><strong>Edit safely</strong> Change rows in the grid and commit or roll back as one batch.</li>
+        <li><strong>Compare</strong> Diff schemas or data between two databases.</li>
+        <li><strong>Move data</strong> Transfer tables between databases, even different engines.</li>
+        <li><strong>Import and export</strong> CSV, Excel, JSON and SQL, with progress you can follow.</li>
+        <li><strong>Connect anywhere</strong> SSH tunnels, TLS certificates and connection strings.</li>
+        <li><strong>Use it from your agent</strong> A built-in MCP server lets Claude Code and other agents query your connections.</li>
+      </ul>
     </section>
 
     <section class="databases" id="databases">
