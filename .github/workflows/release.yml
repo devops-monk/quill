@@ -95,7 +95,10 @@ jobs:
         shell: bash
         env:
           XDG_CACHE_HOME: ${{ runner.temp }}/dbx-tauri-cache
-        run: ./.github/scripts/prepare-appimage-bundler.sh "${{ matrix.target }}"
+        run: |
+          ./.github/scripts/prepare-appimage-bundler.sh "${{ matrix.target }}"
+          # The Tauri build in a later step must find the patched bundler too.
+          echo "XDG_CACHE_HOME=${XDG_CACHE_HOME}" >> "$GITHUB_ENV"
 
       - name: Import Apple signing certificate
         if: runner.os == 'macOS' && env.HAS_APPLE_CERTIFICATE == 'true'
