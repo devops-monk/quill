@@ -13253,7 +13253,7 @@ LIMIT 100;</pre>
                   </div>
                   <div class="mt-1 text-sm text-primary">applink.feishu.cn</div>
                 </button>
-                <button type="button" class="rounded-lg border p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" @click="openExternalUrl('https://github.com/t8y2/dbx')">
+                <button type="button" class="rounded-lg border p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" @click="openExternalUrl('https://github.com/devops-monk/quill')">
                   <div class="flex items-center gap-2 text-sm font-medium">
                     <img src="https://cdn.simpleicons.org/github/181717" alt="GitHub" class="h-7 w-7 rounded-md bg-white p-1" />
                     {{ t("settings.openSource") }}
