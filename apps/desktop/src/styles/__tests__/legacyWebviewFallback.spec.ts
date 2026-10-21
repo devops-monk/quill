@@ -227,7 +227,7 @@ describe("legacy WebView CSS fallbacks", () => {
   });
 
   it("keeps primary alpha utilities readable in legacy WebViews", () => {
-    expect(globalsCss).toContain("--dbx-primary-rgb: 23, 23, 23;");
+    expect(globalsCss).toContain("--dbx-primary-rgb: 84, 76, 226;");
     expect(globalsCss).toContain("--dbx-primary-rgb: 46, 95, 166;");
     expect(globalsCss).toContain(".bg-primary\\/10");
     expect(globalsCss).toContain("background-color: rgba(var(--dbx-primary-rgb), 0.1) !important;");

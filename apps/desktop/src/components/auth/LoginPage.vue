@@ -72,7 +72,7 @@ async function submit() {
       <div class="flex flex-col items-center gap-4">
         <AppLogo class="w-20 h-20 rounded-2xl shadow-lg shadow-blue-500/20" />
         <div class="text-center">
-          <h1 class="text-2xl font-bold tracking-tight">DBX</h1>
+          <h1 class="text-2xl font-bold tracking-tight">Quill</h1>
           <p class="text-sm text-muted-foreground mt-1">
             {{ setupMode ? t("auth.setupDescription") : t("auth.loginDescription") }}
           </p>
@@ -99,7 +99,7 @@ async function submit() {
         </Button>
       </form>
 
-      <p class="text-center text-xs text-muted-foreground/50">Powered by DBX</p>
+      <p class="text-center text-xs text-muted-foreground/50">Powered by Quill</p>
     </div>
   </div>
 </template>

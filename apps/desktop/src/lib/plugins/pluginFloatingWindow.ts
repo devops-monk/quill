@@ -411,7 +411,7 @@ async function createFloatingChild(label: string, request: OpenFloatingWindowReq
     // native input); richer creation-time option sets were not.
     const child = new WebviewWindow(label, {
       url: floatingWindowUrl(request.pluginId, request.contributionId, request.context, creatorLabel),
-      title: request.title ?? "DBX",
+      title: request.title ?? "Quill",
       width: size.width,
       height: size.height,
       minWidth: FLOATING_MIN_WIDTH_PX,

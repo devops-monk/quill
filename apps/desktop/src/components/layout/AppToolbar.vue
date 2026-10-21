@@ -577,11 +577,11 @@ const toolbarStyle = computed(() => {
       target="_blank"
       rel="noopener noreferrer"
       class="flex items-center gap-1.5 h-8 px-2 rounded-md hover:bg-muted/60 transition-colors shrink-0 select-none mr-0.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-      title="DBX"
+      title="Quill"
       data-testid="web-brand-logo"
     >
       <AppLogo class="h-5 w-5 rounded shrink-0 pointer-events-none" />
-      <span class="font-bold text-xs tracking-tight text-foreground/90 translate-y-px">DBX</span>
+      <span class="font-bold text-xs tracking-tight text-foreground/90 translate-y-px">Quill</span>
     </a>
     <Tooltip v-if="showSidebarExpand">
       <TooltipTrigger as-child>
@@ -828,11 +828,11 @@ const toolbarStyle = computed(() => {
       target="_blank"
       rel="noopener noreferrer"
       class="flex items-center gap-1.5 h-8 px-2 rounded-md hover:bg-muted/60 transition-colors shrink-0 select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-      title="DBX"
+      title="Quill"
       data-testid="web-brand-logo"
     >
       <AppLogo class="h-5 w-5 rounded shrink-0 pointer-events-none" />
-      <span class="font-bold text-xs tracking-tight text-foreground/90 translate-y-px">DBX</span>
+      <span class="font-bold text-xs tracking-tight text-foreground/90 translate-y-px">Quill</span>
     </a>
 
     <Tooltip>

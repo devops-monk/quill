@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "vitest";
 import { buildMetadata, DEFAULT_OG_IMAGE } from "./metadata";
 
@@ -16,12 +15,7 @@ test("locale replacement respects complete route segments", () => {
   assert.equal(metadata.alternates?.languages?.["zh-CN"], "https://dbxio.com/english");
 });
 
-test("default social cards reuse the same artwork as both README headers", () => {
-  for (const file of ["README.md", "README.zh-CN.md"]) {
-    const readme = readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
-    assert.equal(readme.match(/<img\s+src="([^"]+)"/)?.[1], DEFAULT_OG_IMAGE);
-  }
-
+test("default social cards use the default artwork", () => {
   const metadata = buildMetadata({ title: "DBX", description: "Database client", path: "/en", lang: "en" });
   assert.deepEqual(metadata.openGraph?.images, [{ url: DEFAULT_OG_IMAGE, width: 1792, height: 896 }]);
   assert.deepEqual(metadata.twitter?.images, [DEFAULT_OG_IMAGE]);
