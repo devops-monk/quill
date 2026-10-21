@@ -26,10 +26,10 @@
       <nav aria-label="Sections">
         <a href="#how">How it works</a>
         <a href="#client">Client</a>
-        <a href="#databases">Databases</a>
-        <a href="#safety">Safety</a>
+        <a href="tutorial/">Tutorial</a>
+        <a href="https://github.com/devops-monk/quill">GitHub</a>
       </nav>
-      <a class="nav-cta" href="https://github.com/devops-monk/quill">GitHub</a>
+      <a class="nav-cta" href="#download">Download</a>
     </div>
   </header>
 
@@ -40,10 +40,10 @@
       <p class="tagline">Write your data in plain words.</p>
       <p class="lede">Ask your database a question in plain English. Quill reads the schema, writes the SQL, and shows you the answer.</p>
       <div class="actions">
-        <a class="button primary" href="https://github.com/devops-monk/quill">View on GitHub</a>
-        <a class="button link" href="#ask">See how it works</a>
+        <a class="button primary" href="#download">Download</a>
+        <a class="button link" href="tutorial/">Follow the tutorial</a>
       </div>
-      <p class="availability">Coming to macOS, Windows and Linux.</p>
+      <p class="availability">For macOS, Windows and Linux. Free and open source.</p>
     </section>
 
     <section class="demo-wrap" id="ask" aria-label="Example: asking a question">
@@ -211,13 +211,42 @@
       </ul>
     </section>
 
-    <section class="closing">
+    <section class="download" id="download" aria-labelledby="download-title" data-download>
       <img src="assets/quill-icon.svg" alt="" width="96" height="96" />
-      <h2>Ask your first question.</h2>
-      <p class="section-lede">Quill is open source. Build it today, or follow along for the first release.</p>
+      <h2 id="download-title">Download Quill</h2>
+      <p class="section-lede" data-release-status>Free and open source, for macOS, Windows and Linux.</p>
       <div class="actions">
-        <a class="button primary" href="https://github.com/devops-monk/quill">View on GitHub</a>
+        <a class="button primary" href="https://github.com/devops-monk/quill/releases/latest" data-primary-download>See all downloads</a>
+        <a class="button link" href="tutorial/">Follow the tutorial</a>
       </div>
+      <div class="platforms">
+        <div class="platform">
+          <h3>macOS</h3>
+          <ul>
+            <li><a href="https://github.com/devops-monk/quill/releases/latest" data-asset="mac-arm">Apple silicon (.dmg)</a></li>
+            <li><a href="https://github.com/devops-monk/quill/releases/latest" data-asset="mac-intel">Intel (.dmg)</a></li>
+          </ul>
+        </div>
+        <div class="platform">
+          <h3>Windows</h3>
+          <ul>
+            <li><a href="https://github.com/devops-monk/quill/releases/latest" data-asset="win-x64">64-bit installer (.exe)</a></li>
+            <li><a href="https://github.com/devops-monk/quill/releases/latest" data-asset="win-x64-msi">64-bit (.msi)</a></li>
+            <li><a href="https://github.com/devops-monk/quill/releases/latest" data-asset="win-arm">ARM installer (.exe)</a></li>
+          </ul>
+        </div>
+        <div class="platform">
+          <h3>Linux</h3>
+          <ul>
+            <li><a href="https://github.com/devops-monk/quill/releases/latest" data-asset="linux-appimage">x64 AppImage</a></li>
+            <li><a href="https://github.com/devops-monk/quill/releases/latest" data-asset="linux-deb">x64 .deb</a></li>
+            <li><a href="https://github.com/devops-monk/quill/releases/latest" data-asset="linux-rpm">x64 .rpm</a></li>
+            <li><a href="https://github.com/devops-monk/quill/releases/latest" data-asset="linux-arm-appimage">ARM64 AppImage</a></li>
+            <li><a href="https://github.com/devops-monk/quill/releases/latest" data-asset="linux-arm-deb">ARM64 .deb</a></li>
+          </ul>
+        </div>
+      </div>
+      <p class="download-note">First launch on macOS: right-click Quill and choose Open. On Windows, if SmartScreen appears, choose More info, then Run anyway.</p>
     </section>
   </main>
 
