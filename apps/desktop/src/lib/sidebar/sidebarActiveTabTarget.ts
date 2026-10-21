@@ -1,0 +1,485 @@
+import { SIDEBAR_TREE_ROW_HEIGHT, type FlatTreeNode } from "@/composables/useFlatTree";
+import { tableMetaForDataTab } from "@/lib/table/tableDataTabMeta";
+import type { QueryTab, TreeNode } from "@/types/database";
+
+export type ActiveTabSidebarTarget =
+  | {
+      type: "connection";
+      connectionId: string;
+    }
+  | {
+      type: "management";
+      connectionId: string;
+      nodeType: "user-admin" | "xugu-user-admin" | "dameng-users" | "dameng-roles" | "dameng-job-admin";
+    }
+  | {
+      type: "table";
+      catalog?: string;
+      connectionId: string;
+      database: string;
+      schema?: string;
+      tableName: string;
+    }
+  | {
+      type: "redis-db";
+      connectionId: string;
+      database: string;
+    }
+  | {
+      type: "mqtt-topic";
+      connectionId: string;
+    }
+  | {
+      type: "mongo-collection";
+      connectionId: string;
+      database: string;
+      collectionName: string;
+    }
+  | {
+      type: "mongo-gridfs";
+      connectionId: string;
+      database: string;
+    }
+  | {
+      type: "vector-collection";
+      connectionId: string;
+      database: string;
+      collectionName: string;
+    }
+  | {
+      type: "hbase-table";
+      connectionId: string;
+      namespace: string;
+      tableName: string;
+    }
+  | {
+      type: "etcd-root";
+      connectionId: string;
+    }
+  | {
+      type: "etcd-dashboard";
+      connectionId: string;
+    }
+  | {
+      type: "etcd-access-control";
+      connectionId: string;
+    }
+  | {
+      type: "nacos-access-control";
+      connectionId: string;
+    }
+  | {
+      type: "zookeeper-root";
+      connectionId: string;
+    }
+  | {
+      type: "consul-root";
+      connectionId: string;
+    }
+  | {
+      type: "consul-overview";
+      connectionId: string;
+    }
+  | {
+      type: "meilisearch-system";
+      connectionId: string;
+    }
+  | {
+      type: "mq-tenant";
+      connectionId: string;
+      tenant: string;
+    }
+  | {
+      type: "nacos-namespace";
+      connectionId: string;
+      namespace: string;
+    }
+  | {
+      type: "query-context";
+      connectionId: string;
+      catalog?: string;
+      database: string;
+      schema?: string;
+    }
+  | {
+      type: "saved-sql-file";
+      savedSqlId: string;
+    };
+
+/**
+ * Resolve a connection root without walking its potentially large object tree.
+ * Grouped connections live below connection-group nodes, while a connection
+ * id can also appear on descendants, so only group children are traversed.
+ */
+export function findSidebarConnectionNode(nodes: readonly TreeNode[], connectionId: string): TreeNode | null {
+  for (const node of nodes) {
+    if (node.type === "connection" && node.id === connectionId) return node;
+    if (node.type === "connection-group" && node.children) {
+      const found = findSidebarConnectionNode(node.children, connectionId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+export function activeTabSidebarTarget(tab: QueryTab | undefined | null): ActiveTabSidebarTarget | null {
+  if (!tab) return null;
+
+  const managementNodeTypes = {
+    users: "user-admin",
+    "xugu-users": "xugu-user-admin",
+    "dameng-users": "dameng-users",
+    "dameng-roles": "dameng-roles",
+    "dameng-jobs": "dameng-job-admin",
+  } as const;
+  if (Object.prototype.hasOwnProperty.call(managementNodeTypes, tab.mode)) {
+    if (!tab.connectionId) return null;
+    return { type: "management", connectionId: tab.connectionId, nodeType: managementNodeTypes[tab.mode as keyof typeof managementNodeTypes] };
+  }
+
+  if (tab.mode === "databases") {
+    return { type: "connection", connectionId: tab.connectionId };
+  }
+
+  if (tab.mode === "objects" || tab.mode === "database-search" || (tab.mode === "structure" && !tab.structureTableName)) {
+    if (!tab.connectionId) return null;
+    if (!tab.database) return { type: "connection", connectionId: tab.connectionId };
+    return {
+      type: "query-context",
+      connectionId: tab.connectionId,
+      database: tab.database,
+      catalog: tab.objectBrowser?.catalog ?? tab.catalog,
+      schema: tab.objectBrowser?.schema ?? tab.schema,
+    };
+  }
+
+  if (tab.mode === "structure") {
+    return { type: "table", connectionId: tab.connectionId, database: tab.database, catalog: tab.catalog, schema: tab.schema, tableName: tab.structureTableName! };
+  }
+
+  if (tab.mode === "redis") {
+    return { type: "redis-db", connectionId: tab.connectionId, database: tab.database };
+  }
+
+  if (tab.mode === "mqtt") {
+    return { type: "mqtt-topic", connectionId: tab.connectionId };
+  }
+
+  if (tab.mode === "data") {
+    const tableMeta = tableMetaForDataTab(tab);
+    const tableName = tableMeta?.tableName || tab.title;
+    if (!tableName) return null;
+    return {
+      type: "table",
+      connectionId: tab.connectionId,
+      database: tableMeta?.database ?? tab.database,
+      ...(tab.catalog ? { catalog: tab.catalog } : {}),
+      schema: tableMeta?.schema ?? tab.schema,
+      tableName,
+    };
+  }
+
+  if (tab.mode === "mongo") {
+    const collectionName = tab.sql || tab.title.split(".").pop() || tab.title;
+    if (!collectionName) return null;
+    return {
+      type: "mongo-collection",
+      connectionId: tab.connectionId,
+      database: tab.database,
+      collectionName,
+    };
+  }
+
+  if (tab.mode === "meilisearch") {
+    const collectionName = tab.sql || tab.title;
+    if (!collectionName) return null;
+    return {
+      type: "mongo-collection",
+      connectionId: tab.connectionId,
+      database: tab.database,
+      collectionName,
+    };
+  }
+
+  if (tab.mode === "meilisearch-system") {
+    return { type: "meilisearch-system", connectionId: tab.connectionId };
+  }
+
+  if (tab.mode === "mongo-bucket") {
+    return {
+      type: "mongo-gridfs",
+      connectionId: tab.connectionId,
+      database: tab.database,
+    };
+  }
+
+  if (tab.mode === "mongo-gridfs") {
+    return {
+      type: "mongo-gridfs",
+      connectionId: tab.connectionId,
+      database: tab.database,
+    };
+  }
+
+  if (tab.mode === "vector") {
+    const collectionName = tab.sql || tab.title;
+    if (!collectionName) return null;
+    return {
+      type: "vector-collection",
+      connectionId: tab.connectionId,
+      database: tab.database,
+      collectionName,
+    };
+  }
+
+  if (tab.mode === "hbase") {
+    if (!tab.sql) return null;
+    return {
+      type: "hbase-table",
+      connectionId: tab.connectionId,
+      namespace: tab.database,
+      tableName: tab.sql || tab.title,
+    };
+  }
+
+  if (tab.mode === "etcd") {
+    return { type: "etcd-root", connectionId: tab.connectionId };
+  }
+
+  if (tab.mode === "etcd-dashboard") {
+    return { type: "etcd-dashboard", connectionId: tab.connectionId };
+  }
+
+  if (tab.mode === "etcd-access-control") {
+    return { type: "etcd-access-control", connectionId: tab.connectionId };
+  }
+
+  if (tab.mode === "nacos-access-control") {
+    return { type: "nacos-access-control", connectionId: tab.connectionId };
+  }
+
+  if (tab.mode === "zookeeper") {
+    return { type: "zookeeper-root", connectionId: tab.connectionId };
+  }
+  if (tab.mode === "consul") {
+    return { type: "consul-root", connectionId: tab.connectionId };
+  }
+  if (tab.mode === "consul-overview") {
+    return { type: "consul-overview", connectionId: tab.connectionId };
+  }
+
+  if (tab.mode === "mq" && tab.mqTenant) {
+    return { type: "mq-tenant", connectionId: tab.connectionId, tenant: tab.mqTenant };
+  }
+
+  if (tab.mode === "nacos") {
+    return { type: "nacos-namespace", connectionId: tab.connectionId, namespace: tab.nacosNamespace || "" };
+  }
+
+  if (tab.savedSqlId) {
+    return { type: "saved-sql-file", savedSqlId: tab.savedSqlId };
+  }
+
+  if (tab.mode === "query") {
+    if (!tab.connectionId) return null;
+    if (!tab.database) return { type: "connection", connectionId: tab.connectionId };
+    return {
+      type: "query-context",
+      connectionId: tab.connectionId,
+      catalog: tab.catalog,
+      database: tab.database,
+      schema: tab.schema,
+    };
+  }
+
+  // Connection workspaces (dashboards, MQ without a tenant, and plugins)
+  // have no more specific object identity.
+  return tab.connectionId ? { type: "connection", connectionId: tab.connectionId } : null;
+}
+
+function schemaMatches(node: TreeNode, schema: string | undefined): boolean {
+  if (!schema) return true;
+
+  if ((node.schema || "") === schema) return true;
+  // Some database engines (for example MySQL in database-object tree mode) do
+  // not store a separate schema on table nodes. In that case the database name
+  // is the effective schema, so a target schema equal to the node database
+  // should still resolve to the loaded table node.
+  return !node.schema && (node.database || "") === schema;
+}
+
+export function matchesTarget(node: TreeNode, target: ActiveTabSidebarTarget): boolean {
+  if (target.type === "connection") {
+    return node.type === "connection" && node.connectionId === target.connectionId;
+  }
+
+  if (target.type === "management") {
+    return node.type === target.nodeType && node.connectionId === target.connectionId;
+  }
+
+  if (target.type === "redis-db") {
+    return node.type === "redis-db" && node.connectionId === target.connectionId && node.database === target.database;
+  }
+  if (target.type === "mqtt-topic") {
+    return node.type === "mqtt-topic" && node.connectionId === target.connectionId;
+  }
+
+  if (target.type === "mongo-collection") {
+    if (node.type === "elasticsearch-index") {
+      return node.connectionId === target.connectionId && node.label === target.collectionName;
+    }
+    return node.type === "mongo-collection" && node.connectionId === target.connectionId && node.database === target.database && node.label === target.collectionName;
+  }
+
+  if (target.type === "meilisearch-system") {
+    return node.type === "meilisearch-system" && node.connectionId === target.connectionId;
+  }
+
+  if (target.type === "mongo-gridfs") {
+    return node.type === "mongo-gridfs" && node.connectionId === target.connectionId && node.database === target.database;
+  }
+
+  if (target.type === "vector-collection") {
+    return node.type === "vector-collection" && node.connectionId === target.connectionId && node.database === target.database && node.label === target.collectionName;
+  }
+
+  if (target.type === "hbase-table") {
+    return node.type === "table" && node.connectionId === target.connectionId && node.database === target.namespace && node.label === target.tableName;
+  }
+
+  if (target.type === "query-context") {
+    if ((node.catalog || undefined) !== (target.catalog || undefined)) return false;
+    if (target.schema) {
+      return node.type === "schema" && node.connectionId === target.connectionId && node.database === target.database && node.label === target.schema;
+    }
+    return (node.type === "database" || node.type === "mongo-db" || node.type === "redis-db" || node.type === "vector-database") && node.connectionId === target.connectionId && (node.database ?? node.label) === target.database;
+  }
+
+  if (target.type === "etcd-root") {
+    return node.type === "etcd-root" && node.connectionId === target.connectionId;
+  }
+
+  if (target.type === "etcd-dashboard") {
+    return node.type === "etcd-dashboard" && node.connectionId === target.connectionId;
+  }
+
+  if (target.type === "etcd-access-control") {
+    return node.type === "etcd-access-control" && node.connectionId === target.connectionId;
+  }
+
+  if (target.type === "nacos-access-control") {
+    return node.type === "nacos-access-control" && node.connectionId === target.connectionId;
+  }
+
+  if (target.type === "zookeeper-root") {
+    return node.type === "zookeeper-root" && node.connectionId === target.connectionId;
+  }
+  if (target.type === "consul-root") {
+    return node.type === "consul-root" && node.connectionId === target.connectionId;
+  }
+  if (target.type === "consul-overview") {
+    return node.type === "consul-overview" && node.connectionId === target.connectionId;
+  }
+
+  if (target.type === "mq-tenant") {
+    return node.type === "mq-tenant" && node.connectionId === target.connectionId && (node.mqTenant || node.label) === target.tenant;
+  }
+
+  if (target.type === "nacos-namespace") {
+    return node.type === "nacos-namespace" && node.connectionId === target.connectionId && (node.nacosNamespace || "") === target.namespace;
+  }
+
+  if (target.type === "saved-sql-file") {
+    return node.type === "saved-sql-file" && node.savedSqlId === target.savedSqlId;
+  }
+
+  return (
+    (node.type === "table" || node.type === "view" || node.type === "materialized_view") &&
+    (node.catalog || undefined) === (target.catalog || undefined) &&
+    node.connectionId === target.connectionId &&
+    node.database === target.database &&
+    schemaMatches(node, target.schema) &&
+    node.label === target.tableName
+  );
+}
+
+export function findSidebarNodeForActiveTab(tab: QueryTab | undefined | null, flatNodes: readonly FlatTreeNode[]): FlatTreeNode | null {
+  const target = activeTabSidebarTarget(tab);
+  if (!target) return null;
+  return findSidebarNodeForTarget(target, flatNodes);
+}
+
+export function findSidebarNodeForTarget(target: ActiveTabSidebarTarget, flatNodes: readonly FlatTreeNode[]): FlatTreeNode | null {
+  return flatNodes.find((item) => matchesTarget(item.node, target)) ?? null;
+}
+
+export function shouldScrollActiveSidebarSelection(options: { activeTabId: string | null | undefined; previousActiveTabId: string | null | undefined; autoSelectEnabled: boolean; previousAutoSelectEnabled: boolean | undefined }): boolean {
+  if (!options.autoSelectEnabled) return false;
+  return options.activeTabId !== options.previousActiveTabId || (options.autoSelectEnabled && options.previousAutoSelectEnabled === false);
+}
+
+// nearest is used for passive auto-selection; smart keeps context for the existing toolbar action.
+export type SidebarNodeScrollAlign = "nearest" | "top" | "smart" | "center";
+
+export function scrollTopForSidebarNode(options: { index: number; currentScrollTop: number; viewportHeight: number; scrollHeight?: number; rowHeight?: number; topOcclusionHeight?: number; align?: SidebarNodeScrollAlign }): number {
+  const rowHeight = options.rowHeight ?? SIDEBAR_TREE_ROW_HEIGHT;
+  if (options.index < 0 || options.viewportHeight <= 0) return options.currentScrollTop;
+
+  const rowTop = options.index * rowHeight;
+  const rowBottom = rowTop + rowHeight;
+  const topOcclusionHeight = options.topOcclusionHeight ?? 0;
+  const maxScrollTop = options.scrollHeight == null ? Number.POSITIVE_INFINITY : Math.max(0, options.scrollHeight - options.viewportHeight);
+  const clampScrollTop = (value: number) => Math.max(0, Math.min(maxScrollTop, value));
+  if (options.align === "top") return clampScrollTop(rowTop - topOcclusionHeight);
+  if (options.align === "smart") {
+    // Similar to IDE Locate: place the target around the upper third of the viewport.
+    const availableViewportHeight = Math.max(rowHeight, options.viewportHeight - topOcclusionHeight);
+    const smartOffset = Math.max(0, (availableViewportHeight - rowHeight) / 3);
+    return clampScrollTop(Math.round(rowTop - topOcclusionHeight - smartOffset));
+  }
+  if (options.align === "center") {
+    const availableViewportHeight = Math.max(rowHeight, options.viewportHeight - topOcclusionHeight);
+    const centerOffset = Math.max(0, (availableViewportHeight - rowHeight) / 2);
+    return clampScrollTop(Math.round(rowTop - topOcclusionHeight - centerOffset));
+  }
+
+  const viewportTop = options.currentScrollTop + topOcclusionHeight;
+  const viewportBottom = options.currentScrollTop + options.viewportHeight;
+
+  if (rowTop < viewportTop) return clampScrollTop(rowTop - topOcclusionHeight);
+  if (rowBottom > viewportBottom) return clampScrollTop(rowBottom - options.viewportHeight);
+  return clampScrollTop(options.currentScrollTop);
+}
+
+export function findNodePathForActiveTab(tab: QueryTab | undefined | null, treeNodes: readonly TreeNode[]): TreeNode[] | null {
+  const target = activeTabSidebarTarget(tab);
+  if (!target) return null;
+  return findNodePathForTarget(target, treeNodes);
+}
+
+export function findNodePathForTarget(target: ActiveTabSidebarTarget, treeNodes: readonly TreeNode[]): TreeNode[] | null {
+  return findPath(treeNodes, (node) => matchesTarget(node, target));
+}
+
+function findPath(nodes: readonly TreeNode[], predicate: (node: TreeNode) => boolean, path: TreeNode[] = []): TreeNode[] | null {
+  for (const node of nodes) {
+    const currentPath = [...path, node];
+    if (predicate(node)) return currentPath;
+    if (node.children) {
+      const result = findPath(node.children, predicate, currentPath);
+      if (result) return result;
+    }
+  }
+  return null;
+}
+
+/** Expand loaded ancestors, including runtime Queries containers without metadata load markers. */
+export function expandSidebarLocatePath(path: readonly TreeNode[], canToggleLoaded: (node: TreeNode) => boolean): void {
+  for (let index = 0; index < path.length; index++) {
+    const node = path[index]!;
+    const next = path[index + 1];
+    const runtimeSqlAncestor = (node.type === "saved-sql-root" || node.type === "saved-sql-folder") && !!next && !!node.children?.some((child) => child.id === next.id);
+    // Keep unloaded table/collection leaves collapsed: their columns were not fetched.
+    if (!node.isExpanded && (runtimeSqlAncestor || canToggleLoaded(node))) node.isExpanded = true;
+  }
+}

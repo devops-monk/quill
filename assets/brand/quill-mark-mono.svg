@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="182 170 660 660" width="660" height="660">
+  <!-- Monochrome mark: nib silhouette with the caret slit, cylinder rim and disc lines cut out -->
+  <mask id="cut">
+    <rect x="0" y="0" width="1024" height="1024" fill="#fff"/>
+    <path d="M332 300 A180 56 0 0 0 692 300" fill="none" stroke="#000" stroke-width="12"/>
+    <path d="M320 372 A192 60 0 0 0 704 372" fill="none" stroke="#000" stroke-width="16"/>
+    <path d="M320 444 A192 60 0 0 0 704 444" fill="none" stroke="#000" stroke-width="16"/>
+    <rect x="501" y="596" width="22" height="240" fill="#000"/>
+    <circle cx="512" cy="560" r="30" fill="#000"/>
+  </mask>
+  <path mask="url(#cut)" fill="#000" d="M332 300 L332 470 C340 600 470 700 512 820 C554 700 684 600 692 470 L692 300 A180 56 0 0 0 332 300 Z"/>
+</svg>

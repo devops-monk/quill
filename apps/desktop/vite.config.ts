@@ -1,0 +1,123 @@
+import { defineConfig } from "vite";
+import vue from "@vitejs/plugin-vue";
+import tailwindcss from "@tailwindcss/vite";
+import path from "path";
+import { publicBasePathRedirectPlugin } from "./vitePublicBasePathRedirect";
+import { connectionTypesPlugin } from "./viteConnectionTypesPlugin.ts";
+
+const host = process.env.TAURI_DEV_HOST;
+const isTauri = !!host || !!process.env.TAURI_ENV_ARCH;
+const tauriDevPort = configuredPort(process.env.TAURI_DEV_PORT, 1420);
+const tauriHmrPort = configuredPort(process.env.TAURI_DEV_HMR_PORT, tauriDevPort + 1);
+const configuredBasePath = process.env.VITE_DBX_BASE_PATH || process.env.DBX_PUBLIC_BASE_PATH;
+const manualChunks: Record<string, string[]> = {
+  codemirror: ["codemirror", "@codemirror/lang-sql", "@codemirror/view", "@codemirror/state", "@codemirror/autocomplete", "@codemirror/commands", "@codemirror/lint", "@codemirror/theme-one-dark"],
+  "vue-echarts": ["vue-echarts"],
+  ui: ["reka-ui"],
+  marked: ["marked"],
+};
+
+function chunkNameForEchartsModule(id: string): string {
+  const echartsPath = id.split("/node_modules/echarts/").pop() ?? "";
+
+  if (echartsPath === "charts.js" || echartsPath.startsWith("lib/chart/")) {
+    return "echarts-charts";
+  }
+
+  if (echartsPath === "components.js" || echartsPath.startsWith("lib/component/")) {
+    return "echarts-components";
+  }
+
+  if (echartsPath === "renderers.js" || echartsPath.startsWith("lib/renderer/")) {
+    return "echarts-renderers";
+  }
+
+  return "echarts-core";
+}
+
+function chunkNameForModule(id: string): string | undefined {
+  const normalizedId = id.replaceAll("\\", "/");
+
+  if (normalizedId.includes("/node_modules/echarts/")) {
+    return chunkNameForEchartsModule(normalizedId);
+  }
+
+  for (const [chunkName, packages] of Object.entries(manualChunks)) {
+    if (packages.some((pkg) => normalizedId.includes(`/node_modules/${pkg}/`))) {
+      return chunkName;
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeViteBase(value: string | undefined): string {
+  const trimmed = value?.trim();
+  if (!trimmed) return "./";
+  if (trimmed === "." || trimmed === "./") return "./";
+  const withLeadingSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return withLeadingSlash.endsWith("/") ? withLeadingSlash : `${withLeadingSlash}/`;
+}
+
+function configuredPort(value: string | undefined, fallback: number): number {
+  const port = Number(value);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : fallback;
+}
+
+const viteBase = normalizeViteBase(configuredBasePath);
+const publicBasePath = viteBase.startsWith("/") ? viteBase.replace(/\/+$/, "") : "";
+const apiProxyPath = publicBasePath ? `${publicBasePath}/api` : "/api";
+const backendUrl = process.env.DBX_BACKEND_URL || "http://localhost:4224";
+
+export default defineConfig(async () => ({
+  root: import.meta.dirname,
+  cacheDir: process.env.DBX_DEV_CACHE_DIR,
+  base: viteBase,
+  plugins: [connectionTypesPlugin(), publicBasePathRedirectPlugin(publicBasePath), vue(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@": path.resolve(import.meta.dirname, "./src"),
+      // Prefer package source during app dev so shell parse changes need no rebuild.
+      "@dbx-app/mongo-shell": path.resolve(import.meta.dirname, "../../packages/mongo-shell/src/index.ts"),
+      // sql-formatter's `exports` map only declares ".", so deep imports into its
+      // bundled parser/tokenizer are rejected by Vite's exports handling. The
+      // The default layout engine needs that AST; see src/lib/sql/layout/internals.ts.
+      "sql-formatter/dist/": `${path.resolve(import.meta.dirname, "../../node_modules/sql-formatter/dist")}/`,
+    },
+  },
+  clearScreen: false,
+  build: {
+    outDir: "../../dist",
+    emptyOutDir: true,
+    // Large generated syntax grammars are already isolated and loaded on demand.
+    chunkSizeWarningLimit: 800,
+    rollupOptions: {
+      output: {
+        manualChunks: chunkNameForModule,
+      },
+    },
+  },
+  server: {
+    port: isTauri ? tauriDevPort : undefined,
+    strictPort: isTauri,
+    host: host || false,
+    hmr: host
+      ? {
+          protocol: "ws",
+          host,
+          port: tauriHmrPort,
+        }
+      : undefined,
+    proxy: {
+      [apiProxyPath]: {
+        target: backendUrl,
+        changeOrigin: true,
+        ws: true,
+        rewrite: publicBasePath ? (requestPath) => requestPath.slice(publicBasePath.length) || "/" : undefined,
+      },
+    },
+    watch: {
+      ignored: ["**/src-tauri/**"],
+    },
+  },
+}));

@@ -1,0 +1,309 @@
+// @vitest-environment happy-dom
+
+import { computed, createApp, h, reactive, shallowRef } from "vue";
+import { EditorState, StateEffect } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useQueryEditorDiagnostics } from "../useQueryEditorDiagnostics";
+import type { SqlSemanticDiagnostic } from "@/lib/sql/semantic/diagnostics";
+import type { QueryEditorProps } from "../queryEditorTypes";
+import type { QueryResult, SqlReferenceAnalysis } from "@/types/database";
+import { graphQueryDatabases } from "@/lib/graph/graphQueryProfiles";
+
+const { analyze, buildDiagnostics } = vi.hoisted(() => ({ analyze: vi.fn(), buildDiagnostics: vi.fn() }));
+vi.mock("@/lib/backend/api", () => ({ analyzeSqlReferences: analyze }));
+vi.mock("@/lib/sql/semantic/diagnostics", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/sql/semantic/diagnostics")>()),
+  buildSqlSemanticDiagnostics: buildDiagnostics,
+}));
+
+type Options = Parameters<typeof useQueryEditorDiagnostics>[0];
+const cleanups: Array<() => void> = [];
+const diagnostic: SqlSemanticDiagnostic = { message: "missing field", severity: "error", span: { start_line: 1, start_column: 8, end_line: 1, end_column: 15 } };
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  analyze.mockResolvedValue({ tables: [], columns: [] });
+  buildDiagnostics.mockReturnValue([diagnostic]);
+});
+
+afterEach(() => {
+  for (const cleanup of cleanups.splice(0).reverse()) cleanup();
+  vi.clearAllTimers();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
+});
+
+function createHarness(overrides: Partial<QueryEditorProps> = {}, syntaxDialect?: QueryEditorProps["syntaxDialect"]) {
+  const props = reactive<QueryEditorProps>({ modelValue: "SELECT missing;", databaseType: "mysql", dialect: "mysql", connectionId: "connection", database: "demo", ...overrides });
+  const parent = document.createElement("div");
+  document.body.append(parent);
+  const currentView = new EditorView({ parent, state: EditorState.create({ doc: props.modelValue }) });
+  const view = shallowRef<EditorView | null>(currentView);
+  const runtime: Options["runtime"] = { editorIsActive: true, executableStatementRangeCache: null, setSqlDiagnosticsEffect: StateEffect.define<SqlSemanticDiagnostic[]>(), diagnosticComp: null, buildSqlDiagnosticExtension: null, codeMirrorCompletionStatus: () => null };
+  const settingsStore = { editorSettings: { sqlSemanticDiagnosticsEnabled: true } } as Options["settingsStore"];
+  const metadata = {
+    cachedTables: [],
+    cachedColumnsByTable: new Map(),
+    loadedColumnsByTable: new Set<string>(),
+    usesOracleSessionCompletionColumns: () => false,
+    findExactSemanticDiagnosticTable: vi.fn().mockResolvedValue(null),
+    completionCacheKey: (table: { name: string }) => table.name,
+    ensureColumnsForTable: vi.fn().mockResolvedValue(false),
+    isMissingTableMetadataError: () => false,
+  };
+  let diagnostics!: ReturnType<typeof useQueryEditorDiagnostics>;
+  const host = document.createElement("div");
+  const app = createApp({
+    setup() {
+      diagnostics = useQueryEditorDiagnostics({
+        props,
+        view,
+        runtime,
+        settingsStore,
+        connectionStore: { connectionIdentifierQuote: () => (props.databaseType === "kingbase" && syntaxDialect !== "mysql" ? '"' : "`") } as Options["connectionStore"],
+        sqlDriverProfile: computed(() => undefined),
+        sqlStatementParameterOptions: () => ({}),
+        sqlBehaviorDialect: () => props.dialect,
+        sqlSyntaxDialect: () => syntaxDialect,
+        semanticCompletionEnabled: false,
+        maxCompletionTables: 100,
+        metadata,
+      });
+      return () => h("div");
+    },
+  });
+  app.mount(host);
+  let mounted = true;
+  const unmount = () => {
+    if (!mounted) return;
+    mounted = false;
+    app.unmount();
+  };
+  cleanups.push(() => {
+    unmount();
+    currentView.destroy();
+    parent.remove();
+  });
+  return { diagnostics, props, runtime, settingsStore, currentView, metadata, unmount };
+}
+
+describe("QueryEditor diagnostic scheduling ownership", () => {
+  it.each(["oracle", "postgres", "mysql", "sqlserver"] as const)("uses the detected Kingbase %s mode for reference analysis", async (mode) => {
+    const { diagnostics } = createHarness({ databaseType: "kingbase", dialect: "postgres", formatDialect: "postgresql" }, mode);
+    diagnostics.scheduleSemanticDiagnostics(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(analyze).toHaveBeenCalledWith("SELECT missing", mode);
+  });
+
+  it.each(graphQueryDatabases)("does not send %s editor text to SQL semantic diagnostics", async (databaseType) => {
+    const { diagnostics, metadata } = createHarness({ databaseType });
+    diagnostics.scheduleSemanticDiagnostics(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(analyze).not.toHaveBeenCalled();
+    expect(buildDiagnostics).not.toHaveBeenCalled();
+    expect(metadata.ensureColumnsForTable).not.toHaveBeenCalled();
+  });
+  it("preserves the unqualified quoted OceanBase reference and selected schema through metadata loading", async () => {
+    const sql = 'SELECT MISSING FROM "Alias"';
+    const { diagnostics, metadata } = createHarness({ databaseType: "oceanbase-oracle", dialect: "oracle", schema: "APP", modelValue: sql });
+    analyze.mockResolvedValue({ tables: [{ name: "Alias", span: { start_line: 1, start_column: 21, end_line: 1, end_column: 27 } }], columns: [] });
+    metadata.findExactSemanticDiagnosticTable.mockResolvedValue({ name: "Alias", schema: "PUBLIC" });
+    diagnostics.scheduleSemanticDiagnostics(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(metadata.ensureColumnsForTable).toHaveBeenCalledWith(expect.objectContaining({ name: "Alias", nameQuoted: true }), undefined, expect.objectContaining({ schema: "APP" }));
+    expect(metadata.ensureColumnsForTable.mock.calls[0]![0].schema).toBeUndefined();
+    expect(buildDiagnostics).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ currentSchema: "APP" }));
+  });
+
+  it("maps a typed execution error onto a selected statement in a larger document", () => {
+    const statement = "SELECT missing;";
+    const modelValue = `SELECT 1;\n${statement}`;
+    const sourceFrom = modelValue.indexOf(statement);
+    const result: QueryResult = {
+      columns: ["Error"],
+      rows: [["unknown column"]],
+      affected_rows: 0,
+      execution_time_ms: 0,
+      execution_error: true,
+      sourceStatement: statement,
+      sourceFrom,
+      sourceTo: sourceFrom + statement.length,
+      error: { version: 1, code: "DBX-JDBC-4001", messageKey: "backendErrors.jdbc.sqlFailed", messageParams: {}, source: "jdbcAgent", operationOutcome: "unknown", errorPosition: { line: 1, column: 8, offset: 7 } },
+    };
+    const { diagnostics, currentView } = createHarness({ modelValue, executionError: "unknown column", executionErrorSql: statement, executionErrorResult: result });
+    expect(diagnostics.sqlErrorDecorationRange(currentView.state)).toEqual([{ from: sourceFrom + 7, to: sourceFrom + 8, message: "unknown column" }]);
+    currentView.dispatch({ changes: { from: sourceFrom + 7, to: sourceFrom + 14, insert: "present" } });
+    expect(diagnostics.sqlErrorDecorationRange(currentView.state)).toEqual([]);
+  });
+
+  it("retains legacy full-document textual diagnostics", () => {
+    const { diagnostics, currentView } = createHarness({ executionError: "syntax error at line 1, column 8", executionErrorSql: "SELECT missing;" });
+    expect(diagnostics.sqlErrorDecorationRange(currentView.state)).toEqual([{ from: 7, to: 8, message: "syntax error at line 1, column 8" }]);
+  });
+
+  it("retains textual diagnostics for older result envelopes without source metadata", () => {
+    const result: QueryResult = { columns: ["Error"], rows: [["syntax error at line 1, column 8"]], affected_rows: 0, execution_time_ms: 0, execution_error: true };
+    const { diagnostics, currentView } = createHarness({ executionError: "syntax error at line 1, column 8", executionErrorSql: "SELECT missing;", executionErrorResult: result });
+    expect(diagnostics.sqlErrorDecorationRange(currentView.state)).toEqual([{ from: 7, to: 8, message: "syntax error at line 1, column 8" }]);
+  });
+
+  it("maps rewritten execution and a Unicode scalar position back onto source text", () => {
+    const statement = "SELECT '😀', missing;";
+    const executedStatement = `SELECT * FROM (${statement}) wrapped LIMIT 10`;
+    const offset = executedStatement.indexOf("missing");
+    const message = "unknown column";
+    const result: QueryResult = {
+      columns: ["Error"],
+      rows: [[message]],
+      affected_rows: 0,
+      execution_time_ms: 0,
+      execution_error: true,
+      sourceStatement: statement,
+      sourceFrom: 0,
+      sourceTo: statement.length,
+      executedStatement,
+      error: { version: 1, code: "DBX-JDBC-4001", messageKey: "backendErrors.jdbc.sqlFailed", messageParams: {}, source: "jdbcAgent", operationOutcome: "unknown", errorPosition: { line: 1, column: Array.from(executedStatement.slice(0, offset)).length + 1, offset } },
+    };
+    const { diagnostics, currentView } = createHarness({ modelValue: statement, executionError: message, executionErrorResult: result });
+    expect(diagnostics.sqlErrorDecorationRange(currentView.state)).toEqual([{ from: statement.indexOf("missing"), to: statement.indexOf("missing") + 1, message }]);
+  });
+
+  it("uses the statement index when identical statements have no saved source offsets", () => {
+    const statement = "SELECT missing";
+    const modelValue = `${statement};\n${statement};`;
+    const message = "syntax error at line 1, column 8";
+    const result: QueryResult = { columns: ["Error"], rows: [[message]], affected_rows: 0, execution_time_ms: 0, execution_error: true, statement_index: 1, sourceStatement: statement };
+    const { diagnostics, currentView } = createHarness({ modelValue, executionError: message, executionErrorResult: result });
+    expect(diagnostics.sqlErrorDecorationRange(currentView.state)).toEqual([{ from: statement.length + 9, to: statement.length + 10, message }]);
+  });
+  it("coalesces timers and shares the latest executable statement cache", async () => {
+    const { diagnostics, currentView, runtime } = createHarness();
+    diagnostics.scheduleSemanticDiagnostics(50);
+    diagnostics.scheduleSemanticDiagnostics(100);
+    await vi.advanceTimersByTimeAsync(99);
+    expect(analyze).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(analyze).toHaveBeenCalledOnce();
+    expect(diagnostics.diagnostics).toEqual([diagnostic]);
+    expect(runtime.executableStatementRangeCache).not.toBeNull();
+    const cache = runtime.executableStatementRangeCache;
+    diagnostics.scheduleSemanticDiagnostics(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runtime.executableStatementRangeCache).toBe(cache);
+    expect(currentView.state.doc.toString()).toBe("SELECT missing;");
+  });
+
+  it("clears old decorations and pending work when SQL diagnostics are disabled", async () => {
+    const { diagnostics, settingsStore } = createHarness();
+    diagnostics.setSemanticDiagnostics([diagnostic]);
+    diagnostics.scheduleSemanticDiagnostics(10);
+    settingsStore.editorSettings.sqlSemanticDiagnosticsEnabled = false;
+    diagnostics.scheduleSemanticDiagnostics(0);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(diagnostics.diagnostics).toEqual([]);
+    expect(analyze).not.toHaveBeenCalled();
+  });
+
+  it("does not schedule work while the editor is inactive", async () => {
+    const { diagnostics, runtime } = createHarness();
+    runtime.editorIsActive = false;
+    diagnostics.scheduleSemanticDiagnostics(0);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(analyze).not.toHaveBeenCalled();
+  });
+
+  it.each([{ connectionId: undefined }, { database: undefined }, { modelValue: "  " }, { databaseType: "elasticsearch" as const }])("clears diagnostics without SQL analysis for unsupported context %j", async (overrides) => {
+    const { diagnostics } = createHarness(overrides);
+    diagnostics.setSemanticDiagnostics([diagnostic]);
+    diagnostics.scheduleSemanticDiagnostics(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(diagnostics.diagnostics).toEqual([]);
+    expect(analyze).not.toHaveBeenCalled();
+  });
+
+  it("rejects an old analysis after document invalidation", async () => {
+    let resolve!: (analysis: SqlReferenceAnalysis) => void;
+    analyze.mockImplementationOnce(
+      () =>
+        new Promise<SqlReferenceAnalysis>((done) => {
+          resolve = done;
+        }),
+    );
+    const { diagnostics, currentView } = createHarness();
+    diagnostics.scheduleSemanticDiagnostics(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(analyze).toHaveBeenCalledOnce();
+    currentView.dispatch({ changes: { from: 0, to: currentView.state.doc.length, insert: "SELECT 1;" } });
+    diagnostics.invalidateSemanticDiagnosticsForDocumentChange();
+    resolve({ tables: [], columns: [] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(buildDiagnostics).not.toHaveBeenCalled();
+    expect(diagnostics.diagnostics).toEqual([]);
+  });
+
+  it("invalidates in-flight analysis on unmount and cancels scheduled work", async () => {
+    let resolve!: (analysis: SqlReferenceAnalysis) => void;
+    analyze.mockImplementationOnce(
+      () =>
+        new Promise<SqlReferenceAnalysis>((done) => {
+          resolve = done;
+        }),
+    );
+    const { diagnostics, unmount, currentView } = createHarness();
+    diagnostics.scheduleSemanticDiagnostics(0);
+    await vi.advanceTimersByTimeAsync(0);
+    diagnostics.scheduleSemanticDiagnostics(500);
+    unmount();
+    const dispatch = vi.spyOn(currentView, "dispatch");
+    resolve({ tables: [], columns: [] });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(analyze).toHaveBeenCalledOnce();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(buildDiagnostics).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { databaseType: "redis" as const, modelValue: "GET" },
+    { databaseType: "mongodb" as const, modelValue: "db.users.unknownMethod()" },
+  ])("preserves native diagnostics with SQL diagnostics disabled for $databaseType", async (overrides) => {
+    const { diagnostics, settingsStore } = createHarness(overrides);
+    settingsStore.editorSettings.sqlSemanticDiagnosticsEnabled = false;
+    diagnostics.scheduleSemanticDiagnostics(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(diagnostics.diagnostics.length).toBeGreaterThan(0);
+    expect(analyze).not.toHaveBeenCalled();
+  });
+
+  it("keeps unfinished MongoDB expressions under the cursor free of premature errors", async () => {
+    const { diagnostics } = createHarness({ databaseType: "mongodb", modelValue: "db.users.find({" });
+    diagnostics.scheduleSemanticDiagnostics(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(diagnostics.diagnostics).toEqual([]);
+    expect(analyze).not.toHaveBeenCalled();
+  });
+
+  it("keeps completed MongoDB warnings while the cursor is in a later unfinished command", async () => {
+    const sql = "db.a.deleteMany({});\ndb.b.find({";
+    const { diagnostics, currentView } = createHarness({ databaseType: "mongodb", modelValue: sql });
+    currentView.dispatch({ selection: { anchor: sql.length } });
+    diagnostics.scheduleSemanticDiagnostics(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(diagnostics.diagnostics).toHaveLength(1);
+    expect(diagnostics.diagnostics[0].severity).toBe("warning");
+    expect(diagnostics.diagnostics[0].message).toContain("every document in a");
+    expect(analyze).not.toHaveBeenCalled();
+  });
+
+  it("does not dispatch unchanged diagnostics or rewrite editor selection", () => {
+    const { diagnostics, currentView } = createHarness();
+    currentView.dispatch({ selection: { anchor: 3 } });
+    const dispatch = vi.spyOn(currentView, "dispatch");
+    diagnostics.setSemanticDiagnostics([diagnostic]);
+    diagnostics.setSemanticDiagnostics([structuredClone(diagnostic)]);
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(dispatch.mock.calls[0][0]).not.toHaveProperty("selection");
+    expect(currentView.state.selection.main.head).toBe(3);
+  });
+});

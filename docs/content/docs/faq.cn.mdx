@@ -1,0 +1,62 @@
+---
+title: 常见问题
+description: DBX 常见问题：连接数据保存在哪里、如何备份、如何让数据与程序同目录或自定义数据目录。
+---
+
+<Callout type="info">DBX 桌面端的常见问题。本页从数据存储与数据目录开始，后续会持续补充新条目。</Callout>
+
+## 数据与备份
+
+<Accordions>
+  <Accordion title="连接配置保存在哪里？">
+    DBX 桌面端把连接、已保存的凭据、SSH 隧道配置、查询历史和应用设置保存在数据目录下的单个 SQLite 数据库文件 `dbx.db` 中：
+
+    - **Windows（安装版）：** `C:\Users\<用户名>\AppData\Roaming\com.dbx.app\dbx.db`
+    - **Windows（便携版压缩包）：** `<DBX.exe 所在目录>\data\dbx.db`
+    - **macOS：** `~/Library/Application Support/com.dbx.app/dbx.db`
+    - **Linux：** `~/.local/share/com.dbx.app/dbx.db`
+
+    SSH 主机指纹保存在同目录的 `known_hosts` 中，DBX 不会读写 `~/.ssh`。数据目录下还可能出现 `dbx.db-wal`、`dbx.db-shm` 检查点文件。
+
+    旧版本 DBX 曾使用 `connections.json` 和 `secrets.json` 保存连接，现在启动时会自动迁移进 `dbx.db`，原文件改名为 `*.bak` 保留。
+
+    跨设备迁移推荐使用加密的[配置导出/导入](/cn/docs/config-export)，而不是直接拷贝文件。手动备份时请先退出 DBX，再复制整个数据目录，或至少复制 `dbx.db` 并连同 `-wal`、`-shm` 文件。
+  </Accordion>
+  <Accordion title="能把数据放在程序同目录，或自定义数据目录吗？">
+    可以，有两种官方支持的方式：
+
+    - **Windows 便携版：** Release 页面的 `DBX_<版本>_<架构>-portable.zip` 自带 `portable.dbx` 标记文件。解压到任意目录运行，所有数据自动保存在 `DBX.exe` 旁边的 `data` 目录。首次启动时，如果便携目录还没有数据、而 AppData 中存在旧数据，会自动导入一次。
+    - **`DBX_DATA_DIR` 环境变量：** 所有平台、安装版和便携版均可用，优先级最高，可指向任意目录。新目录首次启动是空库，请用配置导出/导入迁移，或在 DBX 退出后拷贝 `dbx.db`。
+
+    `portable.dbx` 标记仅对 Windows 生效，且当 exe 旁存在 `uninstall.exe`（安装版）时会被忽略；解压版目录中手动创建该标记同样可以启用便携模式。应用内没有切换数据目录的设置项。
+  </Accordion>
+  <p>升级已有安装前，请先阅读[数据安全升级与迁移说明](/cn/docs/data-security-migration)。</p>
+</Accordions>
+
+## Linux 窗口闪烁或内容消失
+
+在 GNOME 的 Wayland 会话中且系统已开启窗口合成时，Linux 主窗口会绘制带圆角、阴影的浮动边框；X11 下的 GNOME（“GNOME on Xorg”）以及其他桌面（KDE、XFCE、Cinnamon 等）默认使用不透明背景，避免部分显卡驱动与 WebKitGTK 的透明窗口合成兼容问题。两种模式都不会关闭 GPU 加速或改变 Wayland/X11 后端。
+
+可以通过环境变量覆盖默认行为。在 X11 或其他桌面强制启用浮动边框：
+
+```bash
+DBX_LINUX_FLOATING_FRAME=1 dbx
+```
+
+若在 GNOME Wayland 上出现闪烁、内容消失或必须缩放窗口才能重绘，请完全退出 DBX（包括托盘），并使用 `DBX_LINUX_FLOATING_FRAME=0 dbx` 重新启动以强制使用不透明窗口。没有窗口合成时始终不启用浮动边框。AppImage 用户请将 `dbx` 替换为实际的 AppImage 文件路径。
+
+如果默认的不透明窗口仍有问题，请在反馈中提供 DBX 版本、安装方式、KDE/Plasma 版本、Wayland/X11 会话类型、显卡及驱动信息，以及系统 WebKitGTK 版本。
+
+## PostgreSQL / openGauss 中文乱码
+
+如果数据库声明为 `LATIN1`，但历史文本实际保存的是 GB18030 字节，可以在 **编辑连接 → 连接 → URL 参数** 中填写：
+
+```text
+clientEncoding=GB18030&serverEncoding=ISO-8859-1
+```
+
+保存后重新连接。DBX 原生驱动使用这组参数转换查询结果、中文 SQL 和绑定参数；支持表格读取与编辑、文本数组、JSON、元数据和按行导出。不会修改数据库编码或已有数据。`clientEncoding` 也支持 `GBK` 和 `UTF-8`，`serverEncoding` 可写为 `LATIN1`；两个参数必须同时提供。
+
+这组参数只适用于数据库声明编码与实际文本字节不一致的连接。服务端必须报告 `server_encoding=LATIN1`，且 `standard_conforming_strings=on`。读取遇到无法转换的值时保留原文，并在查询消息中提示；其他完整的文本仍正常解码。按字节截断的脱敏值（例如半个汉字后接星号）不会再导致整条查询失败，也不会被替换字符或 NULL 覆盖。写入时不能用指定编码表示的内容仍明确报错。未填写参数的连接使用正常的 PostgreSQL 编码转换。
+
+COPY 文本导入支持 DBX 的默认文本格式；跨连接数据传输会使用按行 INSERT 路径。原始 COPY 输出和其他 COPY 格式请使用按行导入/导出。

@@ -1,0 +1,750 @@
+// @vitest-environment happy-dom
+
+import { createApp, defineComponent, h, nextTick } from "vue";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import CustomContextMenu from "@/components/ui/CustomContextMenu.vue";
+
+function callsFor(spy: ReturnType<typeof vi.spyOn>, eventName: string) {
+  return spy.mock.calls.filter(([name]) => name === eventName);
+}
+
+function removalsForListener(spy: ReturnType<typeof vi.spyOn>, eventName: string, listener: unknown) {
+  return spy.mock.calls.filter(([name, candidate]) => name === eventName && candidate === listener);
+}
+
+const mountedContainers: HTMLElement[] = [];
+
+afterEach(() => {
+  for (const container of mountedContainers.splice(0)) container.remove();
+  vi.restoreAllMocks();
+});
+
+describe("CustomContextMenu lifecycle", () => {
+  it("ignores a pending refresh after the menu has been closed", async () => {
+    let complete!: () => void;
+    const refresh = vi.fn(() => [{ label: "Updated" }]);
+    const close = vi.fn();
+    const root = defineComponent({
+      setup: () => () =>
+        h(
+          CustomContextMenu,
+          {
+            onClose: close,
+            items: [
+              {
+                label: "Switch",
+                sidebarActionId: "menu.layout",
+                closeOnSelect: false,
+                refreshItems: refresh,
+                action: () =>
+                  new Promise<void>((resolve) => {
+                    complete = resolve;
+                  }),
+              },
+            ],
+          },
+          { default: ({ onContextMenu }: { onContextMenu: (event: MouseEvent) => void }) => h("div", { id: "pending-refresh", onContextmenu: onContextMenu }) },
+        ),
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mountedContainers.push(host);
+    const app = createApp(root);
+    app.mount(host);
+    host.querySelector("#pending-refresh")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    await nextTick();
+    document.querySelector<HTMLButtonElement>('[data-menu-action="menu.layout"]')?.click();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await nextTick();
+    complete();
+    await Promise.resolve();
+    await nextTick();
+    expect(close).toHaveBeenCalledOnce();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(document.querySelector("[data-dbx-context-menu]")).toBeNull();
+    app.unmount();
+  });
+
+  it("keeps a height-constrained main menu open on its own scroll events", async () => {
+    const close = vi.fn();
+    const items = Array.from({ length: 50 }, (_, i) => ({ label: `Action ${i}` }));
+    const root = defineComponent({ setup: () => () => h(CustomContextMenu, { items, onClose: close }, { default: ({ onContextMenu }: { onContextMenu: (event: MouseEvent) => void }) => h("div", { id: "tall-menu", onContextmenu: onContextMenu }) }) });
+    const host = document.createElement("div");
+    document.body.append(host);
+    mountedContainers.push(host);
+    const app = createApp(root);
+    app.mount(host);
+    host.querySelector("#tall-menu")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    await nextTick();
+    const menu = document.querySelector<HTMLElement>("[data-dbx-context-menu]")!;
+    expect(menu.style.maxHeight).toBe("calc(100vh - 16px)");
+    menu.dispatchEvent(new Event("scroll", { bubbles: true }));
+    await nextTick();
+    expect(close).not.toHaveBeenCalled();
+    expect(menu.querySelectorAll("button")).toHaveLength(50);
+    app.unmount();
+  });
+  it("opens submenus on click without requiring a hover", async () => {
+    const action = vi.fn();
+    const root = defineComponent({
+      setup: () => () => h(CustomContextMenu, { items: [{ label: "Data tools", children: [{ label: "Export", action }] }] }, { default: ({ onContextMenu }: { onContextMenu: (event: MouseEvent) => void }) => h("div", { id: "click-submenu", onContextmenu: onContextMenu }) }),
+    });
+    const container = document.createElement("div");
+    mountedContainers.push(container);
+    document.body.append(container);
+    const app = createApp(root);
+    app.mount(container);
+    container.querySelector("#click-submenu")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    await nextTick();
+    const trigger = Array.from(document.body.querySelectorAll("button")).find((button) => button.textContent === "Data tools");
+    trigger?.click();
+    await nextTick();
+    const child = Array.from(document.body.querySelectorAll("button")).find((button) => button.textContent === "Export");
+    expect(child).toBeTruthy();
+    child?.click();
+    expect(action).toHaveBeenCalledOnce();
+    app.unmount();
+  });
+  it("exposes the open state and closes only the active target", async () => {
+    const firstOpen = vi.fn();
+    const firstClose = vi.fn();
+    const secondOpen = vi.fn();
+    const secondClose = vi.fn();
+    const root = defineComponent({
+      setup() {
+        const menu = (id: string, onOpen: () => void, onClose: () => void) =>
+          h(
+            CustomContextMenu,
+            { items: [{ label: `Inspect ${id}` }], onOpen, onClose },
+            {
+              default: ({ onContextMenu, isOpen }: { onContextMenu: (event: MouseEvent) => void; isOpen: boolean }) => h("div", { id, "data-context-open": String(isOpen), onContextmenu: onContextMenu }, id),
+            },
+          );
+        return () => [menu("first-target", firstOpen, firstClose), menu("second-target", secondOpen, secondClose)];
+      },
+    });
+    const container = document.createElement("div");
+    mountedContainers.push(container);
+    document.body.append(container);
+    const app = createApp(root);
+    app.mount(container);
+
+    const firstTarget = container.querySelector("#first-target");
+    const secondTarget = container.querySelector("#second-target");
+    firstTarget?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    await nextTick();
+    expect(firstTarget?.getAttribute("data-context-open")).toBe("true");
+    expect(secondTarget?.getAttribute("data-context-open")).toBe("false");
+    expect(firstOpen).toHaveBeenCalledTimes(1);
+    expect(firstClose).not.toHaveBeenCalled();
+
+    firstTarget?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    await nextTick();
+    expect(firstTarget?.getAttribute("data-context-open")).toBe("true");
+    expect(secondTarget?.getAttribute("data-context-open")).toBe("false");
+    expect(firstOpen).toHaveBeenCalledTimes(2);
+    expect(firstClose).toHaveBeenCalledTimes(1);
+
+    secondTarget?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    await nextTick();
+    expect(firstTarget?.getAttribute("data-context-open")).toBe("false");
+    expect(secondTarget?.getAttribute("data-context-open")).toBe("true");
+    expect(firstClose).toHaveBeenCalledTimes(2);
+    expect(secondOpen).toHaveBeenCalledTimes(1);
+
+    window.dispatchEvent(new Event("resize"));
+    window.dispatchEvent(new Event("resize"));
+    await nextTick();
+    expect(secondTarget?.getAttribute("data-context-open")).toBe("false");
+    expect(secondClose).toHaveBeenCalledTimes(1);
+
+    app.unmount();
+  });
+
+  it("removes the capture keydown listener when unmounted while open", async () => {
+    const documentAdd = vi.spyOn(document, "addEventListener");
+    const documentRemove = vi.spyOn(document, "removeEventListener");
+    const root = defineComponent({
+      setup() {
+        return () =>
+          h(
+            CustomContextMenu,
+            { items: [{ label: "Inspect" }] },
+            {
+              default: ({ onContextMenu }: { onContextMenu: (event: MouseEvent) => void }) => h("div", { id: "context-target", onContextmenu: onContextMenu }, "Target"),
+            },
+          );
+      },
+    });
+    const container = document.createElement("div");
+    mountedContainers.push(container);
+    document.body.append(container);
+    const app = createApp(root);
+    app.mount(container);
+
+    container.querySelector("#context-target")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    await nextTick();
+    const keydownListener = callsFor(documentAdd, "keydown").at(-1)?.[1];
+    expect(keydownListener).toBeTruthy();
+
+    app.unmount();
+    await nextTick();
+
+    expect(documentRemove.mock.calls).toContainEqual(["keydown", keydownListener, true]);
+  });
+
+  it("uses one shared listener set across repeated bulk mount cycles", async () => {
+    const documentAdd = vi.spyOn(document, "addEventListener");
+    const documentRemove = vi.spyOn(document, "removeEventListener");
+    const windowAdd = vi.spyOn(window, "addEventListener");
+    const windowRemove = vi.spyOn(window, "removeEventListener");
+
+    for (let cycle = 1; cycle <= 3; cycle += 1) {
+      const root = defineComponent({
+        setup() {
+          return () =>
+            Array.from({ length: 200 }, (_, index) =>
+              h(
+                CustomContextMenu,
+                { items: [{ label: `Action ${index}` }] },
+                {
+                  default: ({ onContextMenu }: { onContextMenu: (event: MouseEvent) => void }) => h("div", { onContextmenu: onContextMenu }, `Target ${index}`),
+                },
+              ),
+            );
+        },
+      });
+      const container = document.createElement("div");
+      mountedContainers.push(container);
+      document.body.append(container);
+      const app = createApp(root);
+
+      app.mount(container);
+      await nextTick();
+      expect(callsFor(documentAdd, "contextmenu")).toHaveLength(cycle);
+      expect(callsFor(documentAdd, "scroll")).toHaveLength(cycle);
+      expect(callsFor(windowAdd, "resize")).toHaveLength(cycle);
+      const contextMenuListener = callsFor(documentAdd, "contextmenu")[cycle - 1][1];
+      const scrollListener = callsFor(documentAdd, "scroll")[cycle - 1][1];
+      const resizeListener = callsFor(windowAdd, "resize")[cycle - 1][1];
+      const contextMenuRemovals = removalsForListener(documentRemove, "contextmenu", contextMenuListener).length;
+      const scrollRemovals = removalsForListener(documentRemove, "scroll", scrollListener).length;
+      const resizeRemovals = removalsForListener(windowRemove, "resize", resizeListener).length;
+
+      app.unmount();
+      await nextTick();
+      expect(removalsForListener(documentRemove, "contextmenu", contextMenuListener)).toHaveLength(contextMenuRemovals + 1);
+      expect(removalsForListener(documentRemove, "scroll", scrollListener)).toHaveLength(scrollRemovals + 1);
+      expect(removalsForListener(windowRemove, "resize", resizeListener)).toHaveLength(resizeRemovals + 1);
+    }
+  });
+
+  it("preserves open and global close behavior", async () => {
+    const root = defineComponent({
+      setup() {
+        return () =>
+          h(
+            CustomContextMenu,
+            { items: [{ label: "Inspect" }] },
+            {
+              default: ({ onContextMenu }: { onContextMenu: (event: MouseEvent) => void }) => h("div", { id: "context-target", onContextmenu: onContextMenu }, "Target"),
+            },
+          );
+      },
+    });
+    const container = document.createElement("div");
+    mountedContainers.push(container);
+    document.body.append(container);
+    const app = createApp(root);
+    app.mount(container);
+
+    const target = container.querySelector("#context-target");
+    target?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 10, clientY: 20 }));
+    await nextTick();
+    expect(document.body.textContent).toContain("Inspect");
+
+    window.dispatchEvent(new Event("resize"));
+    await nextTick();
+    expect(document.body.textContent).not.toContain("Inspect");
+
+    app.unmount();
+  });
+
+  it("closes the menu when an application shortcut is pressed", async () => {
+    const root = defineComponent({
+      setup() {
+        return () =>
+          h(
+            CustomContextMenu,
+            { items: [{ label: "Refresh row" }] },
+            {
+              default: ({ onContextMenu }: { onContextMenu: (event: MouseEvent) => void }) => h("div", { id: "context-target", onContextmenu: onContextMenu, onKeydown: (event: KeyboardEvent) => event.stopPropagation() }, "Target"),
+            },
+          );
+      },
+    });
+    const container = document.createElement("div");
+    mountedContainers.push(container);
+    document.body.append(container);
+    const app = createApp(root);
+    app.mount(container);
+
+    const target = container.querySelector("#context-target");
+    target?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    await nextTick();
+    expect(document.body.textContent).toContain("Refresh row");
+
+    target?.dispatchEvent(new KeyboardEvent("keydown", { key: "Meta", metaKey: true, bubbles: true }));
+    await nextTick();
+    expect(document.body.textContent).toContain("Refresh row");
+
+    target?.dispatchEvent(new KeyboardEvent("keydown", { key: "r", metaKey: true, bubbles: true }));
+    await nextTick();
+    expect(document.body.textContent).not.toContain("Refresh row");
+
+    app.unmount();
+  });
+
+  it("renders checked state in the leading icon slot", async () => {
+    const root = defineComponent({
+      setup() {
+        return () =>
+          h(
+            CustomContextMenu,
+            { items: [{ label: "Current", checked: true }, { label: "Other" }] },
+            {
+              default: ({ onContextMenu }: { onContextMenu: (event: MouseEvent) => void }) => h("div", { id: "context-target", onContextmenu: onContextMenu }, "Target"),
+            },
+          );
+      },
+    });
+    const container = document.createElement("div");
+    mountedContainers.push(container);
+    document.body.append(container);
+    const app = createApp(root);
+    app.mount(container);
+
+    container.querySelector("#context-target")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    await nextTick();
+
+    const current = Array.from(document.body.querySelectorAll("button")).find((button) => button.textContent?.includes("Current"));
+    const other = Array.from(document.body.querySelectorAll("button")).find((button) => button.textContent?.includes("Other"));
+    expect(current?.firstElementChild?.querySelector("svg")).not.toBeNull();
+    expect(current?.lastElementChild?.tagName.toLowerCase()).toBe("span");
+    expect(other?.querySelector("svg")).toBeNull();
+
+    app.unmount();
+  });
+
+  it("keeps a destructive submenu trigger red while expanded", async () => {
+    const root = defineComponent({
+      setup() {
+        return () =>
+          h(
+            CustomContextMenu,
+            {
+              items: [
+                {
+                  label: "More",
+                  variant: "destructive",
+                  children: [{ label: "Drop table", variant: "destructive" }],
+                },
+              ],
+            },
+            {
+              default: ({ onContextMenu }: { onContextMenu: (event: MouseEvent) => void }) => h("div", { id: "context-target", onContextmenu: onContextMenu }, "Target"),
+            },
+          );
+      },
+    });
+    const container = document.createElement("div");
+    mountedContainers.push(container);
+    document.body.append(container);
+    const app = createApp(root);
+    app.mount(container);
+
+    container.querySelector("#context-target")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    await nextTick();
+
+    const trigger = Array.from(document.body.querySelectorAll("button")).find((button) => button.textContent?.includes("More"));
+    expect(trigger?.classList.contains("text-destructive")).toBe(true);
+    expect(trigger?.querySelector("svg")?.classList.contains("text-destructive")).toBe(true);
+
+    trigger?.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+    await nextTick();
+
+    expect(trigger?.classList.contains("bg-destructive/10")).toBe(true);
+    expect(trigger?.classList.contains("text-accent-foreground")).toBe(false);
+    expect(document.body.textContent).toContain("Drop table");
+
+    app.unmount();
+  });
+
+  it("resolves lazy menu items again for every open", async () => {
+    let copied = false;
+    const items = vi.fn(() =>
+      copied
+        ? [
+            {
+              label: "Paste Table",
+              action: () => {
+                copied = false;
+              },
+            },
+          ]
+        : [
+            {
+              label: "Copy Table",
+              action: () => {
+                copied = true;
+              },
+            },
+          ],
+    );
+    const root = defineComponent({
+      setup() {
+        return () =>
+          h(
+            CustomContextMenu,
+            { items },
+            {
+              default: ({ onContextMenu }: { onContextMenu: (event: MouseEvent) => void }) => h("div", { id: "context-target", onContextmenu: onContextMenu }, "Target"),
+            },
+          );
+      },
+    });
+    const container = document.createElement("div");
+    mountedContainers.push(container);
+    document.body.append(container);
+    const app = createApp(root);
+    app.mount(container);
+
+    const target = container.querySelector("#context-target");
+    target?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    await nextTick();
+    expect(document.body.textContent).toContain("Copy Table");
+
+    const copyAction = Array.from(document.body.querySelectorAll("button")).find((button) => button.textContent?.includes("Copy Table"));
+    copyAction?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await nextTick();
+    expect(copied).toBe(true);
+
+    target?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    await nextTick();
+    expect(document.body.textContent).toContain("Paste Table");
+    expect(document.body.textContent).not.toContain("Copy Table");
+
+    const pasteAction = Array.from(document.body.querySelectorAll("button")).find((button) => button.textContent?.includes("Paste Table"));
+    pasteAction?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await nextTick();
+    expect(copied).toBe(false);
+
+    target?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    await nextTick();
+    expect(document.body.textContent).toContain("Copy Table");
+    expect(document.body.textContent).not.toContain("Paste Table");
+    expect(items).toHaveBeenCalledTimes(3);
+
+    app.unmount();
+  });
+
+  it("keeps the menu open when scrolling inside a scrollable submenu", async () => {
+    const children = Array.from({ length: 40 }, (_, index) => ({ label: `Copy option ${index}` }));
+    const root = defineComponent({
+      setup() {
+        return () =>
+          h(
+            CustomContextMenu,
+            { items: [{ label: "Copy", children }] },
+            {
+              default: ({ onContextMenu }: { onContextMenu: (event: MouseEvent) => void }) => h("div", { id: "context-target", onContextmenu: onContextMenu }, "Target"),
+            },
+          );
+      },
+    });
+    const container = document.createElement("div");
+    mountedContainers.push(container);
+    document.body.append(container);
+    const app = createApp(root);
+    app.mount(container);
+
+    const target = container.querySelector("#context-target");
+    target?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 10, clientY: 20 }));
+    await nextTick();
+
+    const copyTrigger = Array.from(document.body.querySelectorAll("button")).find((button) => button.textContent?.includes("Copy"));
+    expect(copyTrigger).toBeTruthy();
+    copyTrigger?.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true, clientX: 20, clientY: 30 }));
+    await nextTick();
+
+    const submenu = Array.from(document.body.querySelectorAll("[data-dbx-context-menu]")).find((el) => el.textContent?.includes("Copy option 0"));
+    expect(submenu).toBeTruthy();
+    submenu?.dispatchEvent(new Event("scroll", { bubbles: true }));
+    await nextTick();
+    expect(document.body.textContent).toContain("Copy option 0");
+
+    document.dispatchEvent(new Event("scroll", { bubbles: true }));
+    await nextTick();
+    expect(document.body.textContent).not.toContain("Copy option 0");
+
+    app.unmount();
+  });
+});
+
+describe("submenu pointer grace area", () => {
+  // The panel sits to the right of the trigger row between these bounds.
+  // happy-dom performs no layout, so the rectangles the component measures are
+  // stubbed on the submenu element directly.
+  const SUBMENU_RECT = { left: 200, right: 300, top: 100, bottom: 200, width: 100, height: 100 } as DOMRect;
+
+  async function mountSubmenuMenu() {
+    const root = defineComponent({
+      setup: () => () => h(CustomContextMenu, { items: [{ label: "Data tools", children: [{ label: "Export" }] }] }, { default: ({ onContextMenu }: { onContextMenu: (event: MouseEvent) => void }) => h("div", { id: "grace-target", onContextmenu: onContextMenu }) }),
+    });
+    const container = document.createElement("div");
+    mountedContainers.push(container);
+    document.body.append(container);
+    const app = createApp(root);
+    app.mount(container);
+    container.querySelector("#grace-target")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    await nextTick();
+    const trigger = Array.from(document.body.querySelectorAll("button")).find((button) => button.textContent === "Data tools")!;
+    trigger.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true, clientX: 150, clientY: 150 }));
+    await nextTick();
+    const submenu = Array.from(document.body.querySelectorAll("[data-dbx-context-menu]")).at(-1) as HTMLElement;
+    submenu.getBoundingClientRect = () => SUBMENU_RECT;
+    return { app, trigger };
+  }
+
+  function submenuIsOpen(): boolean {
+    return document.body.textContent?.includes("Export") ?? false;
+  }
+
+  function movePointerTo(x: number, y: number) {
+    document.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: x, clientY: y }));
+  }
+
+  it("keeps the submenu open while the pointer travels diagonally towards it", async () => {
+    vi.useFakeTimers();
+    try {
+      const { app, trigger } = await mountSubmenuMenu();
+      expect(submenuIsOpen()).toBe(true);
+
+      // Leaving the trigger row and crossing the gap between the two panels puts
+      // the pointer inside neither rectangle, which is the movement that used to
+      // close the submenu before it could be reached.
+      trigger.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true, clientX: 150, clientY: 150 }));
+      movePointerTo(190, 150);
+      await nextTick();
+      vi.advanceTimersByTime(400);
+      await nextTick();
+
+      expect(submenuIsOpen()).toBe(true);
+      app.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the submenu open when the pointer wobbles mid-travel", async () => {
+    vi.useFakeTimers();
+    try {
+      const { app, trigger } = await mountSubmenuMenu();
+
+      trigger.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true, clientX: 150, clientY: 150 }));
+      movePointerTo(190, 150);
+      await nextTick();
+      vi.advanceTimersByTime(400);
+      // A second move that is still inside the wedge must not re-arm the close.
+      movePointerTo(195, 165);
+      await nextTick();
+      vi.advanceTimersByTime(400);
+      await nextTick();
+
+      expect(submenuIsOpen()).toBe(true);
+      app.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still closes the submenu when the pointer moves away from it", async () => {
+    vi.useFakeTimers();
+    try {
+      const { app, trigger } = await mountSubmenuMenu();
+
+      trigger.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true, clientX: 150, clientY: 150 }));
+      movePointerTo(120, 300);
+      await nextTick();
+      vi.advanceTimersByTime(400);
+      await nextTick();
+
+      expect(submenuIsOpen()).toBe(false);
+      app.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("submenu hand-over between rows", () => {
+  // Tall panel, so the wedge from a row towards it is what a diagonal slide
+  // rides. happy-dom performs no layout, so the panel rectangle is stubbed.
+  const SUBMENU_RECT = { left: 200, right: 300, top: 100, bottom: 300, width: 100, height: 200 } as DOMRect;
+
+  const ITEMS = [{ label: "Data tools", children: [{ label: "Export" }] }, { label: "Copy", children: [{ label: "Copy cell" }] }, { label: "Refresh" }];
+
+  function rowButton(label: string): HTMLButtonElement {
+    return Array.from(document.body.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === label)!;
+  }
+
+  function bodyText(): string {
+    return document.body.textContent ?? "";
+  }
+
+  async function mountRowMenu() {
+    const root = defineComponent({
+      setup: () => () => h(CustomContextMenu, { items: ITEMS }, { default: ({ onContextMenu }: { onContextMenu: (event: MouseEvent) => void }) => h("div", { id: "handover-target", onContextmenu: onContextMenu }, "Target") }),
+    });
+    const container = document.createElement("div");
+    mountedContainers.push(container);
+    document.body.append(container);
+    const app = createApp(root);
+    app.mount(container);
+    container.querySelector("#handover-target")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 10, clientY: 20 }));
+    await nextTick();
+    rowButton("Data tools").dispatchEvent(new MouseEvent("mouseenter", { bubbles: true, clientX: 50, clientY: 140 }));
+    await nextTick();
+    const submenu = Array.from(document.body.querySelectorAll("[data-dbx-context-menu]")).at(-1) as HTMLElement;
+    submenu.getBoundingClientRect = () => SUBMENU_RECT;
+    return { app };
+  }
+
+  // Leaves the open trigger at its bottom edge and enters the row below, which is
+  // what a diagonal slide towards the panel looks like.
+  function slideInto(label: string, x: number, y: number) {
+    rowButton("Data tools").dispatchEvent(new MouseEvent("mouseleave", { bubbles: true, clientX: 50, clientY: 140 }));
+    rowButton(label).dispatchEvent(new MouseEvent("mouseenter", { bubbles: true, clientX: x, clientY: y }));
+  }
+
+  function movePointerTo(x: number, y: number) {
+    document.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: x, clientY: y }));
+  }
+
+  it("keeps the open submenu while the pointer crosses a neighbouring trigger row", async () => {
+    vi.useFakeTimers();
+    try {
+      const { app } = await mountRowMenu();
+      expect(bodyText()).toContain("Export");
+
+      slideInto("Copy", 60, 145);
+      await nextTick();
+      vi.advanceTimersByTime(1000);
+      await nextTick();
+
+      // Still inside the wedge towards its own panel, so the crossed row must not
+      // take the submenu over, not even after the settle delay.
+      expect(bodyText()).toContain("Export");
+      expect(bodyText()).not.toContain("Copy cell");
+      app.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the open submenu while the pointer crosses a row without children", async () => {
+    vi.useFakeTimers();
+    try {
+      const { app } = await mountRowMenu();
+
+      slideInto("Refresh", 60, 145);
+      await nextTick();
+      vi.advanceTimersByTime(1000);
+      await nextTick();
+
+      expect(bodyText()).toContain("Export");
+      app.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("hands the submenu over shortly after the pointer settles on a neighbouring row", async () => {
+    vi.useFakeTimers();
+    try {
+      const { app } = await mountRowMenu();
+
+      // Crossing the row inside the wedge keeps the panel. Moving on down, below
+      // the wedge, is the pointer asking for this row after all; a vertical move
+      // along the menu does not wait for the diagonal settle delay.
+      slideInto("Copy", 60, 145);
+      await nextTick();
+      movePointerTo(60, 260);
+      await nextTick();
+      expect(bodyText()).toContain("Export");
+
+      vi.advanceTimersByTime(100);
+      await nextTick();
+      expect(bodyText()).toContain("Copy cell");
+      expect(bodyText()).not.toContain("Export");
+      app.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the diagonal settle delay while the pointer swings sideways towards the open panel", async () => {
+    vi.useFakeTimers();
+    try {
+      const { app } = await mountRowMenu();
+
+      // The pointer drops below the wedge, then swings sideways back towards the
+      // panel: it may be re-aiming at that panel, so the row underneath must not
+      // take it over right away.
+      rowButton("Data tools").dispatchEvent(new MouseEvent("mouseleave", { bubbles: true, clientX: 50, clientY: 140 }));
+      movePointerTo(50, 300);
+      movePointerTo(120, 290);
+      await nextTick();
+      rowButton("Copy").dispatchEvent(new MouseEvent("mouseenter", { bubbles: true, clientX: 170, clientY: 285 }));
+      await nextTick();
+      vi.advanceTimersByTime(100);
+      await nextTick();
+      expect(bodyText()).toContain("Export");
+      expect(bodyText()).not.toContain("Copy cell");
+
+      vi.advanceTimersByTime(400);
+      await nextTick();
+      expect(bodyText()).toContain("Copy cell");
+      app.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("switches between sibling submenus without the diagonal settle delay", async () => {
+    vi.useFakeTimers();
+    try {
+      const { app } = await mountRowMenu();
+
+      slideInto("Copy", 60, 145);
+      await nextTick();
+      movePointerTo(60, 260);
+      await nextTick();
+      vi.advanceTimersByTime(100);
+      await nextTick();
+      expect(bodyText()).toContain("Copy cell");
+
+      // Moving straight back up is the same deliberate row travel in reverse.
+      rowButton("Copy").dispatchEvent(new MouseEvent("mouseleave", { bubbles: true, clientX: 60, clientY: 260 }));
+      rowButton("Data tools").dispatchEvent(new MouseEvent("mouseenter", { bubbles: true, clientX: 60, clientY: 140 }));
+      await nextTick();
+      vi.advanceTimersByTime(100);
+      await nextTick();
+      expect(bodyText()).toContain("Export");
+      expect(bodyText()).not.toContain("Copy cell");
+      app.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

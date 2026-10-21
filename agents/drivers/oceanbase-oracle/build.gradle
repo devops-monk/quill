@@ -1,0 +1,11 @@
+dependencies {
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+    implementation 'com.oceanbase:oceanbase-client:2.4.19'
+    testImplementation 'com.google.code.gson:gson:2.14.0'
+}
+
+tasks.named('shadowJar') {
+    manifest {
+        attributes('Agent-Label': 'OceanBase Oracle Mode', 'Main-Class': 'com.dbx.agent.oceanbaseoracle.OceanBaseOracleAgent')
+    }
+}

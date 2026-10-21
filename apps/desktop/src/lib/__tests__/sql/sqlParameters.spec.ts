@@ -1,0 +1,1711 @@
+import { describe, expect, it } from "vitest";
+import { extractSqlParameterDescriptors, extractSqlParameters, readSqlBracedParameterAt, sqlParameterLiteral, substituteSqlParameters } from "@/lib/sql/sqlParameters";
+
+describe("extractSqlParameters", () => {
+  it("shares strict braced-placeholder validation", () => {
+    expect(readSqlBracedParameterAt("#{month}", 0)?.name).toBe("month");
+    expect(readSqlBracedParameterAt("#{1month}", 0)).toBeNull();
+    expect(readSqlBracedParameterAt("#{month", 0)).toBeNull();
+    expect(readSqlBracedParameterAt("#{month}", 0, { enabledSyntaxes: ["shell"] })).toBeNull();
+  });
+
+  it("recognizes dotted braced parameter names as complete keys", () => {
+    expect(readSqlBracedParameterAt("${params.profile.name}", 0)).toMatchObject({
+      key: "params.profile.name",
+      name: "params.profile.name",
+      syntax: "shell",
+    });
+    expect(readSqlBracedParameterAt("#{ 参数.用户_2.名称 }", 0)).toMatchObject({
+      key: "参数.用户_2.名称",
+      name: "参数.用户_2.名称",
+      syntax: "mybatis",
+    });
+  });
+
+  it("rejects malformed dotted braced parameter names", () => {
+    for (const token of ["${.name}", "${params.}", "${params..name}", "${params.1name}", "${params[0]}"]) {
+      expect(readSqlBracedParameterAt(token, 0)).toBeNull();
+      expect(extractSqlParameters(`select ${token}`)).toEqual([]);
+    }
+  });
+
+  it("keeps colon and at-sign parameters single-segment", () => {
+    expect(extractSqlParameterDescriptors("select :params.name, @context.user")).toEqual([
+      { key: "params", name: "params", syntax: "named", token: ":params" },
+      { key: "context", name: "context", syntax: "sqlserver", token: "@context" },
+    ]);
+    expect(extractSqlParameters("select :customer_id", { databaseType: "mysql" })).toEqual(["customer_id"]);
+  });
+
+  it("preserves Neo4j pattern labels and relationship types", () => {
+    const cypher = 'MATCH (p:Person)-[:WORK_IN]->(c:Company{name:"星云科技"})\nRETURN p.name, p.job, c.name';
+    const options = { databaseType: "neo4j" as const };
+    expect(extractSqlParameterDescriptors(cypher, options)).toEqual([]);
+    expect(substituteSqlParameters(cypher, {}, options)).toBe(cypher);
+    expect(extractSqlParameterDescriptors(cypher, { ...options, enabledSyntaxes: ["named"] as const })).toEqual([]);
+    expect(extractSqlParameters("MATCH (p:Person {name:${name}}) RETURN p", options)).toEqual(["name"]);
+  });
+
+  it("keeps NebulaGraph tags and edge types intact in nGQL", () => {
+    const ngql = 'MATCH (p:Person)-[:WORK_IN]->(c:Company{name:"星云科技"}) RETURN p.Person.name LIMIT 10';
+    const options = { databaseType: "nebula" as const };
+    expect(extractSqlParameterDescriptors(ngql, options)).toEqual([]);
+    expect(substituteSqlParameters(ngql, {}, options)).toBe(ngql);
+    expect(extractSqlParameters("MATCH (p:Person {name:${name}}) RETURN p LIMIT 10", options)).toEqual(["name"]);
+    expect(extractSqlParameters("select :customer_id", { databaseType: "mysql" })).toEqual(["customer_id"]);
+  });
+
+  it("extracts unique template parameters in order", () => {
+    const sql = "select * from t where pt_dt between ${start_date} and ${end_date} or pt_dt = ${start_date}";
+    expect(extractSqlParameters(sql)).toEqual(["start_date", "end_date"]);
+  });
+
+  it("extracts dotted braced parameters in unquoted and quoted contexts", () => {
+    const sql = "select ${params.id}, #{params.profile.name}, '${params.label}', 'prefix#{params.code}'";
+    expect(extractSqlParameters(sql)).toEqual(["params.id", "params.profile.name", "params.label", "params.code"]);
+  });
+
+  it("extracts quoted braced placeholders while ignoring backticks and comments", () => {
+    const sql = `
+      select '\${quoted}' as a, "\${identifier}" as b, \`\${mysql_identifier}\`
+      , 'prefix\${embedded}' as c, 'x#{partial}' as d
+      -- \${line_comment}
+      # \${hash_comment}
+      #\${hash_comment_without_space}
+      select 1 #comment \${inline_hash_comment}
+      /* \${block_comment} */
+      from t
+      where id = \${id}
+    `;
+    expect(extractSqlParameters(sql)).toEqual(["quoted", "identifier", "embedded", "partial", "id"]);
+    expect(extractSqlParameterDescriptors("select * from t where dt='${date}' and flag=\"#{enabled}\"")).toEqual([
+      { key: "date", name: "date", syntax: "shell", token: "'${date}'" },
+      { key: "enabled", name: "enabled", syntax: "mybatis", token: '"#{enabled}"' },
+    ]);
+  });
+
+  it("ignores placeholders inside Postgres dollar-quoted strings", () => {
+    const sql = "select $$ ${body_param} $$, $tag$ ${tag_param} $tag$, ${real_param}";
+    expect(extractSqlParameters(sql)).toEqual(["real_param"]);
+  });
+
+  it.each(["oracle", "oceanbase-oracle"] as const)("preserves alternative-quoted strings and following parameters for %s", (databaseType) => {
+    for (const literal of [
+      "q'[O'Reilly :hidden]'",
+      "nq'{O'Reilly :hidden}'",
+      "Q'<O'Reilly :hidden>'",
+      "NQ'(O'Reilly :hidden)'",
+      "q'!O'Reilly :hidden!'",
+      "q'[O'Reilly [nested] :hidden]'",
+      "q'[O'Reilly /* :inside */ @LINK ${shell} #{mybatis} ? :hidden]'",
+      "q''O'Reilly :hidden''",
+      "nq'😀O'Reilly :hidden😀'",
+    ]) {
+      const sql = `UPDATE t SET name = ${literal} WHERE id = :id`;
+      expect(extractSqlParameters(sql, { databaseType })).toEqual(["id"]);
+      expect(substituteSqlParameters(sql, { id: { kind: "number", value: "7" }, hidden: { kind: "string", value: "WRONG" } }, { databaseType })).toBe(`UPDATE t SET name = ${literal} WHERE id = 7`);
+    }
+  });
+
+  it.each(["oracle", "oceanbase-oracle"] as const)("ignores parameters inside unterminated alternative-quoted strings for %s", (databaseType) => {
+    for (const literal of ["q'[O'Reilly :hidden", "nq'{O'Reilly :hidden]"]) {
+      const sql = `SELECT :id, ${literal}`;
+      expect(extractSqlParameters(sql, { databaseType })).toEqual(["id"]);
+      expect(substituteSqlParameters(sql, { id: { kind: "number", value: "7" } }, { databaseType })).toBe(`SELECT 7, ${literal}`);
+    }
+  });
+
+  it.each(["oracle", "oceanbase-oracle"] as const)("preserves separated database links after alternative-quoted strings for %s", (databaseType) => {
+    for (const literal of ["q'[O'Reilly :hidden]'", "nq'{O'Reilly :hidden}'", "q''O'Reilly :hidden''", "nq'😀O'Reilly :hidden😀'"]) {
+      const sql = `SELECT ${literal} FROM employees /* separator */ @LINK WHERE id = :id`;
+      expect(extractSqlParameters(sql, { databaseType })).toEqual(["id"]);
+      expect(substituteSqlParameters(sql, { id: { kind: "number", value: "7" }, LINK: { kind: "string", value: "WRONG" } }, { databaseType })).toBe(`SELECT ${literal} FROM employees /* separator */ @LINK WHERE id = 7`);
+    }
+  });
+
+  it.each(["postgres", "mysql", "sqlserver", "dameng"] as const)("does not apply alternative-quote rules to %s", (databaseType) => {
+    const sql = "SELECT q'[O' AS label, :id";
+    expect(extractSqlParameters(sql, { databaseType })).toEqual(["id"]);
+    expect(substituteSqlParameters(sql, { id: { kind: "number", value: "7" } }, { databaseType })).toBe("SELECT q'[O' AS label, 7");
+  });
+
+  it.each(["oracle", "oceanbase-oracle"] as const)("requires a complete alternative-quote prefix for %s", (databaseType) => {
+    for (const prefix of ["myq", "mynq", "my$q"]) {
+      const sql = `SELECT ${prefix}'[O' AS label, :id`;
+      expect(extractSqlParameters(sql, { databaseType })).toEqual(["id"]);
+    }
+  });
+
+  it.each(["oracle", "oceanbase-oracle"] as const)("keeps alternative-quoted content during MyBatis substitution for %s", (databaseType) => {
+    const sql = "SELECT q'[O'Reilly &lt; :hidden]' FROM t WHERE id &gt; #{id}";
+    expect(extractSqlParameters(sql, { databaseType })).toEqual(["id"]);
+    expect(substituteSqlParameters(sql, { id: { kind: "number", value: "7" } }, { databaseType })).toBe("SELECT q'[O'Reilly &lt; :hidden]' FROM t WHERE id > 7");
+  });
+
+  it.each(["oracle", "oceanbase-oracle"] as const)("ignores MyBatis closing tags inside alternative-quoted strings for %s", (databaseType) => {
+    const sql = "SELECT * FROM t <where> name = q'[O'Reilly </where> :hidden]' AND id = #{id} </where>";
+    expect(extractSqlParameters(sql, { databaseType })).toEqual(["id"]);
+    expect(substituteSqlParameters(sql, { id: { kind: "number", value: "7" } }, { databaseType })).toBe("SELECT * FROM t WHERE name = q'[O'Reilly </where> :hidden]' AND id = 7");
+  });
+
+  it.each(["oracle", "oceanbase-oracle"] as const)("preserves trigger pseudo-records after alternative-quoted strings for %s", (databaseType) => {
+    const sql = "CREATE TRIGGER trg BEFORE UPDATE ON t FOR EACH ROW BEGIN :new.name := nq'[O'Reilly :hidden]'; :new.id := :id; END;";
+    expect(extractSqlParameters(sql, { databaseType })).toEqual(["id"]);
+    expect(substituteSqlParameters(sql, { id: { kind: "number", value: "7" } }, { databaseType })).toBe("CREATE TRIGGER trg BEFORE UPDATE ON t FOR EACH ROW BEGIN :new.name := nq'[O'Reilly :hidden]'; :new.id := 7; END;");
+  });
+
+  it.each(["oracle", "oceanbase-oracle"] as const)("keeps parameters after ordinary strings ending in a literal backslash for %s", (databaseType) => {
+    const sql = "UPDATE t SET name = 'a\\' WHERE id = :id";
+    expect(extractSqlParameters(sql, { databaseType })).toEqual(["id"]);
+    expect(substituteSqlParameters(sql, { id: { kind: "number", value: "7" } }, { databaseType })).toBe("UPDATE t SET name = 'a\\' WHERE id = 7");
+    expect(extractSqlParameters(sql, { databaseType: "mysql" })).toEqual([]);
+    expect(substituteSqlParameters("SELECT 'a\\' FROM t WHERE id &gt; #{id}", { id: { kind: "number", value: "7" } }, { databaseType })).toBe("SELECT 'a\\' FROM t WHERE id > 7");
+  });
+
+  it("extracts supported placeholder syntaxes in order", () => {
+    const sql = "select ? as a, :named as b, ${shell_name} as c, #{mybatis_name} as d, @sql_server_name as e";
+    expect(extractSqlParameters(sql)).toEqual(["?1", "named", "shell_name", "mybatis_name", "sql_server_name"]);
+  });
+
+  it("preserves PostgreSQL JSON question-mark operators", () => {
+    const sql = `
+      select
+        c."CallResult",
+        c."CallResult" -> 'data' ? 'callingResults' as "HasResult",
+        c."CallResult" ?| array['data', 'error'] as "HasAnyResult",
+        c."CallResult" ?& array['data', 'callingResults'] as "HasAllResults",
+        c."CallResult" @? '$.data.callingResults' as "MatchesPath"
+      from "FaultResultCallInfo" as c
+    `;
+
+    expect(extractSqlParameters(sql, { databaseType: "postgres" })).toEqual([]);
+    expect(substituteSqlParameters(sql, {}, { databaseType: "postgres" })).toBe(sql);
+  });
+
+  it("keeps PostgreSQL positional placeholders around JSON operators", () => {
+    const sql = "select ? as input_value from events where id = ? and payload ? ? and payload ?| ? and payload ?& ? limit ?";
+
+    expect(extractSqlParameters(sql, { databaseType: "postgres" })).toEqual(["?1", "?2", "?3", "?4", "?5", "?6"]);
+    expect(
+      substituteSqlParameters(
+        sql,
+        {
+          "?1": { kind: "number", value: "1" },
+          "?2": { kind: "number", value: "2" },
+          "?3": { kind: "string", value: "callingResults" },
+          "?4": { kind: "raw", value: "ARRAY['data', 'error']" },
+          "?5": { kind: "raw", value: "ARRAY['data', 'callingResults']" },
+          "?6": { kind: "number", value: "100" },
+        },
+        { databaseType: "postgres" },
+      ),
+    ).toBe("select 1 as input_value from events where id = 2 and payload ? 'callingResults' and payload ?| ARRAY['data', 'error'] and payload ?& ARRAY['data', 'callingResults'] limit 100");
+  });
+
+  it("keeps ordinary PostgreSQL positional placeholder contexts", () => {
+    const sql = "select ?::jsonb, coalesce(?, '{}'::jsonb) from events where ? = id order by ? limit ? offset ?";
+
+    expect(extractSqlParameters(sql, { databaseType: "postgres" })).toEqual(["?1", "?2", "?3", "?4", "?5", "?6"]);
+  });
+
+  it("does not expose date format tokens after PostgreSQL ARRAY expressions", () => {
+    const sql = `
+      WITH rec_flow AS (
+        SELECT
+          order_no,
+          ARRAY[
+            concat(
+              operator_name, '(', COALESCE(remark, ''), ')[',
+              CASE operate_action
+                WHEN 'CREATE' THEN '创建工单'
+                WHEN 'SUBMIT' THEN '提交至下一处理人'
+                WHEN 'BACK' THEN '退回上一环节'
+                WHEN 'FINISH' THEN '已完成'
+                WHEN 'SUBMIT-CONFIRM' THEN '提交给创建人确认'
+                WHEN 'COMPLETE' THEN '确认工单'
+                ELSE operate_action
+              END, ']'
+            )
+          ]::varchar[]
+          || CASE
+            WHEN operate_action NOT IN ('FINISH','COMPLETE')
+              THEN ARRAY[target_handler_name]::varchar[]
+            ELSE ARRAY[]::varchar[]
+          END AS name_arr,
+          rn
+        FROM (
+          SELECT
+            'ORD20260821001' AS order_no,
+            '张三' AS operator_name,
+            '发起流程' AS remark,
+            'SUBMIT' AS operate_action,
+            '李四' AS target_handler_name,
+            1 AS rn
+        ) AS mock_t3_flow
+      )
+      SELECT to_char(current_timestamp, 'yyyy-MM-dd HH24:mi:ss');
+    `;
+
+    expect(extractSqlParameters(sql, { databaseType: "postgres" })).toEqual([]);
+  });
+
+  it("keeps PostgreSQL ARRAY literals and subscripts in the lexical stream", () => {
+    const dateSql = "to_char(current_timestamp, 'yyyy-MM-dd HH24:mi:ss')";
+    for (const arrayExpression of ["ARRAY['x']", "ARRAY[']']", "ARRAY['[']", "ARRAY['a]b']", "ARRAY[]::varchar[]"]) {
+      expect(extractSqlParameters(`SELECT ${arrayExpression}, ${dateSql};`, { databaseType: "postgres" })).toEqual([]);
+    }
+
+    expect(extractSqlParameters("SELECT ARRAY['x'][:array_index], values[:subscript_index];", { databaseType: "postgres" })).toEqual([]);
+  });
+
+  it("does not treat a standalone PostgreSQL date format as a parameter", () => {
+    expect(extractSqlParameters("SELECT to_char(current_timestamp, 'HH24:MI:SS');", { databaseType: "postgres" })).toEqual([]);
+  });
+
+  it("keeps PostgreSQL named parameters inside ARRAY constructors", () => {
+    const sql = "SELECT ARRAY[:first_value, :second_value];";
+    expect(extractSqlParameters(sql, { databaseType: "postgres" })).toEqual(["first_value", "second_value"]);
+    expect(substituteSqlParameters(sql, { first_value: { kind: "number", value: "1" }, second_value: { kind: "number", value: "2" } }, { databaseType: "postgres" })).toBe("SELECT ARRAY[1, 2];");
+    expect(extractSqlParameters("SELECT :id;", { databaseType: "postgres" })).toEqual(["id"]);
+  });
+
+  it("does not treat PostgreSQL slice bounds as named parameters", () => {
+    const sql = "SELECT arr[lower:upper], arr[:upper], ARRAY[arr[:nested_upper], :constructor_value];";
+
+    expect(extractSqlParameters(sql, { databaseType: "postgres" })).toEqual(["constructor_value"]);
+    expect(substituteSqlParameters(sql, { constructor_value: { kind: "number", value: "7" } }, { databaseType: "postgres" })).toBe("SELECT arr[lower:upper], arr[:upper], ARRAY[arr[:nested_upper], 7];");
+  });
+
+  it("keeps named parameters inside nested PostgreSQL ARRAY constructors and parenthesized subscripts", () => {
+    const sql = "SELECT ARRAY[[:first_value, :second_value], ARRAY[:third_value]], values[(:subscript_index)];";
+
+    expect(extractSqlParameters(sql, { databaseType: "postgres" })).toEqual(["first_value", "second_value", "third_value", "subscript_index"]);
+  });
+
+  it("preserves SQL Server bracketed identifiers while scanning parameters", () => {
+    const sql = "SELECT [column:inside], :actual";
+    expect(extractSqlParameters(sql, { databaseType: "sqlserver" })).toEqual(["actual"]);
+    expect(substituteSqlParameters(sql, { actual: { kind: "number", value: "7" } }, { databaseType: "sqlserver" })).toBe("SELECT [column:inside], 7");
+  });
+
+  it.each(["sqlite", "jdbc", "access"] as const)("preserves bracketed identifiers for %s", (databaseType) => {
+    expect(extractSqlParameters("SELECT [column:inside], :actual", { databaseType })).toEqual(["actual"]);
+  });
+
+  it("keeps historical bracket scanning when no database dialect is supplied", () => {
+    expect(extractSqlParameters("SELECT [column:inside], :actual")).toEqual(["actual"]);
+  });
+
+  it("keeps question marks as positional placeholders for other databases", () => {
+    expect(extractSqlParameters("select payload ? 'callingResults' from events", { databaseType: "mysql" })).toEqual(["?1"]);
+  });
+
+  it("ignores npm scoped packages in JDBCX MCP command arguments", () => {
+    const sql = '{{ mcp(cmd=npx, args=-y @modelcontextprotocol/server-everything, tool=echo): {"message":"hello"} }}';
+    expect(extractSqlParameters(sql)).toEqual([]);
+    expect(substituteSqlParameters(sql, {})).toBe(sql);
+  });
+
+  it("keeps SQL Server parameters used in division expressions", () => {
+    expect(extractSqlParameters("select @amount/2, @total / 4")).toEqual(["amount", "total"]);
+  });
+
+  it("does not treat the Dameng DBLink in issue #11247 as a parameter", () => {
+    const sql = "select * from test.table_name@dm1";
+    expect(extractSqlParameterDescriptors(sql, { databaseType: "dameng" })).toEqual([]);
+    expect(substituteSqlParameters(sql, { dm1: { kind: "string", value: "WRONG" } }, { databaseType: "dameng" })).toBe(sql);
+  });
+
+  it.each(["oracle", "oceanbase-oracle", "dameng"] as const)("ignores %s database links while preserving standalone at-sign placeholders", (databaseType) => {
+    const sql = 'SELECT * FROM HR.EMPLOYEES@REMOTE_DB, "AUDIT_LOG"@ARCHIVE_DB WHERE tenant_id = @tenant_id';
+    expect(extractSqlParameters("SELECT 1 FROM DUAL@WDHIS160;", { databaseType })).toEqual([]);
+    expect(extractSqlParameters(sql, { databaseType })).toEqual(["tenant_id"]);
+    expect(substituteSqlParameters(sql, { tenant_id: { kind: "number", value: "7" } }, { databaseType })).toBe('SELECT * FROM HR.EMPLOYEES@REMOTE_DB, "AUDIT_LOG"@ARCHIVE_DB WHERE tenant_id = 7');
+    expect(extractSqlParameters("SELECT * FROM EMPLOYEES@REMOTE_DB", { databaseType: "postgres" })).toEqual(["REMOTE_DB"]);
+  });
+
+  it.each(["oracle", "oceanbase-oracle", "dameng"] as const)("preserves %s links, quoted names, strings and comments during substitution", (databaseType) => {
+    const sql = `SELECT '@literal' FROM "Hr"."Audit Log"@ARCHIVE_DB /* @comment */ WHERE "Id" = :id AND tenant_id = @tenant_id -- @tail`;
+    expect(extractSqlParameters(sql, { databaseType })).toEqual(["id", "tenant_id"]);
+    expect(
+      substituteSqlParameters(
+        sql,
+        {
+          id: { kind: "number", value: "3" },
+          tenant_id: { kind: "number", value: "7" },
+          ARCHIVE_DB: { kind: "number", value: "99" },
+          literal: { kind: "number", value: "99" },
+          comment: { kind: "number", value: "99" },
+          tail: { kind: "number", value: "99" },
+        },
+        { databaseType },
+      ),
+    ).toBe(`SELECT '@literal' FROM "Hr"."Audit Log"@ARCHIVE_DB /* @comment */ WHERE "Id" = 3 AND tenant_id = 7 -- @tail`);
+  });
+
+  it.each(["oracle", "oceanbase-oracle", "dameng"] as const)("extracts only real %s parameters around separated database links", (databaseType) => {
+    const sql = `SELECT @projection FROM SYS.ALL_TABLES @LINK
+      JOIN "Hr"."Audit Log"/* comment */@ARCHIVE_DB ON 1 = 1
+      JOIN employees -- comment with /* and @ignored
+        @REMOTE_DB ON 1 = 1
+      WHERE owner = :owner AND tenant_id = @tenant_id`;
+    expect(extractSqlParameters(sql, { databaseType })).toEqual(["projection", "owner", "tenant_id"]);
+  });
+
+  describe.each(["oracle", "oceanbase-oracle", "dameng"] as const)("%s strict database link contexts", (databaseType) => {
+    it.each([
+      ["SELECT XMLSERIALIZE(CONTENT @value AS CLOB) FROM DUAL", "XMLTYPE('<a/>')"],
+      ["SELECT XMLSERIALIZE(CONTENT@value AS CLOB) FROM DUAL", "XMLTYPE('<a/>')"],
+      ["SELECT XMLSERIALIZE(DOCUMENT @value AS CLOB) FROM DUAL", "XMLTYPE('<a/>')"],
+      ["CREATE OR REPLACE PACKAGE BODY @value AS PROCEDURE p IS BEGIN NULL; END; END;", "test_package"],
+      ["DROP DATABASE LINK @value", "remote_db"],
+      ["CREATE DATABASE LINK @value CONNECT TO remote_user IDENTIFIED BY password USING 'remote'", "remote_db"],
+      ['SELECT "xml_column" @value FROM DUAL', "AS xml_alias"],
+    ])("keeps raw template parameters outside object references in %s", (sql, value) => {
+      expect(extractSqlParameters(sql, { databaseType })).toEqual(["value"]);
+      expect(substituteSqlParameters(sql, { value: { kind: "raw", value } }, { databaseType })).toBe(sql.replace("@value", value));
+    });
+
+    it.each([
+      ["SELECT XMLSERIALIZE(CONTENT @fn('<a/>') AS CLOB) FROM DUAL", "SELECT XMLSERIALIZE(CONTENT XMLTYPE('<a/>') AS CLOB) FROM DUAL"],
+      ["SELECT XMLSERIALIZE(DOCUMENT @fn('<a/>') AS CLOB) FROM DUAL", "SELECT XMLSERIALIZE(DOCUMENT XMLTYPE('<a/>') AS CLOB) FROM DUAL"],
+      ["SELECT XMLQUERY('/a' PASSING @fn('<a/>') RETURNING CONTENT) FROM DUAL", "SELECT XMLQUERY('/a' PASSING XMLTYPE('<a/>') RETURNING CONTENT) FROM DUAL"],
+      ["SELECT XMLQUERY(fn_nested('/a') PASSING @fn('<a/>') RETURNING CONTENT) FROM DUAL", "SELECT XMLQUERY(fn_nested('/a') PASSING XMLTYPE('<a/>') RETURNING CONTENT) FROM DUAL"],
+      ["SELECT COALESCE(XMLSERIALIZE(CONTENT @fn('<a/>') AS CLOB), 'empty') FROM DUAL", "SELECT COALESCE(XMLSERIALIZE(CONTENT XMLTYPE('<a/>') AS CLOB), 'empty') FROM DUAL"],
+    ])("keeps function-name templates after SQL/XML keywords in %s", (sql, expected) => {
+      expect(extractSqlParameters(sql, { databaseType })).toEqual(["fn"]);
+      expect(substituteSqlParameters(sql, { fn: { kind: "raw", value: "XMLTYPE" } }, { databaseType })).toBe(expected);
+    });
+
+    it.each([
+      "SELECT XMLQUERY('/a' PASSING BY VALUE @fn('<a/>') RETURNING CONTENT) FROM DUAL",
+      "SELECT XMLTABLE('/a' PASSING @fn('<a/>') COLUMNS name VARCHAR2(50) PATH '.') FROM DUAL",
+      "SELECT XMLTABLE('/a' PASSING BY /* separator */ VALUE @fn('<a/>') COLUMNS name VARCHAR2(50) PATH '.') FROM DUAL",
+      "SELECT XMLQUERY('/a' PASSING BY VALUE @fn('<a/>'), @fn('<b/>') AS b RETURNING CONTENT) FROM DUAL",
+      "SELECT COALESCE(XMLQUERY(fn_nested('/a') PASSING BY VALUE @fn('<a/>') RETURNING CONTENT), NULL) FROM DUAL",
+      "SELECT XMLQUERY('/a' PASSING BY VALUE XMLQUERY('/b' PASSING BY VALUE @fn('<a/>') RETURNING CONTENT) RETURNING CONTENT) FROM DUAL",
+    ])("keeps complete SQL/XML PASSING function templates in %s", (sql) => {
+      expect(extractSqlParameters(sql, { databaseType })).toEqual(["fn"]);
+      expect(substituteSqlParameters(sql, { fn: { kind: "raw", value: "XMLTYPE" } }, { databaseType })).toBe(sql.replaceAll("@fn", "XMLTYPE"));
+    });
+
+    it.each([
+      "SELECT XMLQUERY('/a' PASSING BY VALUE value@LINK(1) RETURNING CONTENT) FROM DUAL",
+      "SELECT XMLTABLE('/a' PASSING passing@LINK(1) COLUMNS name VARCHAR2(50) PATH '.') FROM DUAL",
+      "SELECT XMLTABLE('/a' PASSING BY VALUE HR.value@LINK(1), \"VALUE\"@LINK(1) AS b COLUMNS name VARCHAR2(50) PATH '.') FROM DUAL",
+      "SELECT XMLQUERY('/a' PASSING BY VALUE (value@LINK(1)) RETURNING CONTENT) FROM DUAL",
+      "SELECT XMLQUERY('/a' PASSING COALESCE(passing@LINK(1), NULL) RETURNING CONTENT) FROM DUAL",
+    ])("preserves remote routines inside complete SQL/XML PASSING clauses in %s", (sql) => {
+      expect(extractSqlParameters(sql, { databaseType })).toEqual([]);
+      expect(substituteSqlParameters(sql, { LINK: { kind: "raw", value: "WRONG" } }, { databaseType })).toBe(sql);
+    });
+
+    it.each([
+      "SELECT content@LINK('<a/>'), document@LINK('<a/>'), passing@LINK('<a/>') FROM DUAL",
+      'SELECT HR.content@LINK(1), "CONTENT"@LINK(1) FROM DUAL',
+      'SELECT XMLSERIALIZE(CONTENT HR.content@LINK(1) AS CLOB), XMLSERIALIZE(DOCUMENT "DOCUMENT"@LINK(1) AS CLOB) FROM DUAL',
+      "SELECT XMLQUERY('/a' PASSING HR.passing@LINK(1) RETURNING CONTENT) FROM DUAL",
+      "SELECT XMLSERIALIZE(CONTENT (content@LINK(1)) AS CLOB) FROM DUAL",
+      "SELECT XMLSERIALIZE(CONTENT content@LINK(1) AS CLOB), XMLSERIALIZE(DOCUMENT document@LINK(1) AS CLOB) FROM DUAL",
+      "SELECT XMLQUERY('/a' PASSING passing@LINK(1) RETURNING CONTENT) FROM DUAL",
+      "SELECT XMLQUERY(passing@LINK(1)) FROM DUAL",
+      "SELECT XMLQUERY(fn_nested('/a') PASSING passing@LINK(1) RETURNING CONTENT) FROM DUAL",
+    ])("preserves real remote routines named after SQL/XML keywords in %s", (sql) => {
+      expect(extractSqlParameters(sql, { databaseType })).toEqual([]);
+      expect(substituteSqlParameters(sql, { LINK: { kind: "raw", value: "WRONG" } }, { databaseType })).toBe(sql);
+    });
+
+    it("preserves remote routine links in expressions and PL/SQL calls", () => {
+      const sql = "SELECT HR.get_value@LINK(:id) FROM DUAL; BEGIN HR.run_job /* link */ @LINK(:id); END;";
+      expect(extractSqlParameters(sql, { databaseType })).toEqual(["id"]);
+      expect(substituteSqlParameters(sql, { id: { kind: "number", value: "7" }, LINK: { kind: "raw", value: "WRONG" } }, { databaseType })).toBe("SELECT HR.get_value@LINK(7) FROM DUAL; BEGIN HR.run_job /* link */ @LINK(7); END;");
+    });
+
+    it.each(["employees", "HR.EMPLOYEES", '"Hr"."Employees"', "DUAL"])("preserves compact and separated links on %s", (objectName) => {
+      for (const separator of ["", " /* object link */ "]) {
+        const sql = `SELECT @value FROM ${objectName}${separator}@LINK WHERE id = :id`;
+        expect(extractSqlParameters(sql, { databaseType })).toEqual(["value", "id"]);
+        expect(substituteSqlParameters(sql, { value: { kind: "number", value: "1" }, id: { kind: "number", value: "7" }, LINK: { kind: "raw", value: "WRONG" } }, { databaseType })).toBe(`SELECT 1 FROM ${objectName}${separator}@LINK WHERE id = 7`);
+      }
+    });
+
+    it.each(["DELETE FROM @table WHERE id = :id", "INSERT INTO @table VALUES (:id)"])("keeps parameters after reserved keywords in %s", (sql) => {
+      expect(extractSqlParameters(sql, { databaseType })).toEqual(["table", "id"]);
+      expect(substituteSqlParameters(sql, { table: { kind: "raw", value: "employees" }, id: { kind: "number", value: "7" } }, { databaseType })).toBe(sql.replace("@table", "employees").replace(":id", "7"));
+    });
+
+    it("preserves remote routine links in comma-separated select lists", () => {
+      const sql = "SELECT ename, HR.get_sal@LINK(empno) FROM emp WHERE id = :id";
+      expect(extractSqlParameters(sql, { databaseType })).toEqual(["id"]);
+      expect(substituteSqlParameters(sql, { LINK: { kind: "raw", value: "WRONG" }, id: { kind: "number", value: "7" } }, { databaseType })).toBe("SELECT ename, HR.get_sal@LINK(empno) FROM emp WHERE id = 7");
+    });
+  });
+
+  describe.each(["oracle", "oceanbase-oracle"] as const)("%s database link separators", (databaseType) => {
+    it.each(["", " ", "\t\r\n", "/* comment with -- and @ignored */", " /* first */ \n /* second */ ", "-- comment with /* and @ignored\n"])("preserves database links separated by %j during replacement", (separator) => {
+      const sql = `SELECT '@literal', @projection FROM "Hr"."Audit Log"${separator}@LINK WHERE id = :id -- @tail`;
+      expect(
+        substituteSqlParameters(
+          sql,
+          {
+            LINK: { kind: "string", value: "WRONG" },
+            projection: { kind: "number", value: "3" },
+            id: { kind: "number", value: "7" },
+          },
+          { databaseType },
+        ),
+      ).toBe(`SELECT '@literal', 3 FROM "Hr"."Audit Log"${separator}@LINK WHERE id = 7 -- @tail`);
+    });
+
+    it("keeps parameters following SQL and PL/SQL keywords", () => {
+      const sql = `SELECT CASE WHEN/* table_name */@condition THEN @yes ELSE @no END FROM DUAL;
+        BEGIN IF @condition THEN NULL; END IF; RETURN @result; END;`;
+      expect(extractSqlParameters(sql, { databaseType })).toEqual(["condition", "yes", "no", "result"]);
+      expect(
+        substituteSqlParameters(
+          sql,
+          {
+            condition: { kind: "raw", value: "1 = 1" },
+            yes: { kind: "number", value: "1" },
+            no: { kind: "number", value: "0" },
+            result: { kind: "number", value: "7" },
+          },
+          { databaseType },
+        ),
+      ).toBe(`SELECT CASE WHEN/* table_name */1 = 1 THEN 1 ELSE 0 END FROM DUAL;
+        BEGIN IF 1 = 1 THEN NULL; END IF; RETURN 7; END;`);
+    });
+
+    it("preserves quoted keywords and Unicode object names before links", () => {
+      const sql = `SELECT @value FROM "SELECT" /* separator */ @LINK, 订单 @中文链接 WHERE id = :id`;
+      expect(extractSqlParameters(sql, { databaseType })).toEqual(["value", "id"]);
+      expect(substituteSqlParameters(sql, { value: { kind: "number", value: "1" }, id: { kind: "number", value: "7" } }, { databaseType })).toBe(`SELECT 1 FROM "SELECT" /* separator */ @LINK, 订单 @中文链接 WHERE id = 7`);
+    });
+
+    it("keeps standalone parameters in joins, pagination and dynamic SQL", () => {
+      const sql = `SELECT @value FROM @source JOIN @target USING (@column)
+        OFFSET @offset ROWS FETCH NEXT @count ROWS ONLY;
+        BEGIN EXECUTE IMMEDIATE @sql USING @input; END;`;
+      expect(extractSqlParameters(sql, { databaseType })).toEqual(["value", "source", "target", "column", "offset", "count", "sql", "input"]);
+    });
+
+    it.each(["HR.NEXT", "HR.OFFSET", "HR.FIRST", "FIRST", "-- comment\nFIRST", "employees, FIRST", "(SELECT id FROM employees) e, FIRST"])("preserves database links on the non-reserved object %s", (objectName) => {
+      const sql = `SELECT * FROM ${objectName} /* separator */ @LINK WHERE id = :id`;
+      expect(extractSqlParameters(sql, { databaseType })).toEqual(["id"]);
+      expect(substituteSqlParameters(sql, { LINK: { kind: "string", value: "WRONG" }, id: { kind: "number", value: "7" } }, { databaseType })).toBe(`SELECT * FROM ${objectName} /* separator */ @LINK WHERE id = 7`);
+    });
+
+    it("keeps lock wait, null ordering and cursor parameters", () => {
+      const sql = `SELECT * FROM HR.EMPLOYEES ORDER BY id NULLS @position FOR UPDATE WAIT @seconds;
+        BEGIN OPEN @cursor FOR SELECT * FROM HR.EMPLOYEES; END;`;
+      expect(extractSqlParameters(sql, { databaseType })).toEqual(["position", "seconds", "cursor"]);
+      expect(substituteSqlParameters(sql, { position: { kind: "raw", value: "FIRST" }, seconds: { kind: "number", value: "5" }, cursor: { kind: "raw", value: "c" } }, { databaseType })).toBe(`SELECT * FROM HR.EMPLOYEES ORDER BY id NULLS FIRST FOR UPDATE WAIT 5;
+        BEGIN OPEN c FOR SELECT * FROM HR.EMPLOYEES; END;`);
+    });
+
+    it.each([
+      ["SELECT * FROM HR.EMPLOYEES AS OF SCN @value", "7", "SELECT * FROM HR.EMPLOYEES AS OF SCN 7"],
+      ["SELECT * FROM HR.EMPLOYEES AS OF TIMESTAMP @value", "SYSTIMESTAMP", "SELECT * FROM HR.EMPLOYEES AS OF TIMESTAMP SYSTIMESTAMP"],
+      ["BEGIN CLOSE @value; END;", "c", "BEGIN CLOSE c; END;"],
+      ["SELECT * FROM employees WHERE name LIKE 'x' ESCAPE @value", "'!'", "SELECT * FROM employees WHERE name LIKE 'x' ESCAPE '!'"],
+      ["SELECT CURRENT_TIMESTAMP AT TIME ZONE @value FROM DUAL", "'UTC'", "SELECT CURRENT_TIMESTAMP AT TIME ZONE 'UTC' FROM DUAL"],
+      ["SELECT INTERVAL @value DAY FROM DUAL", "'1'", "SELECT INTERVAL '1' DAY FROM DUAL"],
+      ["SELECT JSON_OBJECT(KEY @value VALUE 'x') FROM DUAL", "'k'", "SELECT JSON_OBJECT(KEY 'k' VALUE 'x') FROM DUAL"],
+      ["SELECT JSON_OBJECT(KEY 'k' VALUE @value) FROM DUAL", "'x'", "SELECT JSON_OBJECT(KEY 'k' VALUE 'x') FROM DUAL"],
+      ["SELECT XMLQUERY('/a' PASSING @value RETURNING CONTENT) FROM DUAL", "XMLTYPE('<a/>')", "SELECT XMLQUERY('/a' PASSING XMLTYPE('<a/>') RETURNING CONTENT) FROM DUAL"],
+      ["SELECT SUM(salary) OVER (ORDER BY salary RANGE @value PRECEDING) FROM employees", "100", "SELECT SUM(salary) OVER (ORDER BY salary RANGE 100 PRECEDING) FROM employees"],
+      ["SELECT id FROM employees CONNECT BY NOCYCLE @value", "PRIOR id = manager_id", "SELECT id FROM employees CONNECT BY NOCYCLE PRIOR id = manager_id"],
+      ["SELECT LISTAGG(name, ',' ON OVERFLOW TRUNCATE @value) WITHIN GROUP (ORDER BY name) FROM employees", "'...'", "SELECT LISTAGG(name, ',' ON OVERFLOW TRUNCATE '...') WITHIN GROUP (ORDER BY name) FROM employees"],
+      ["SELECT name COLLATE @value FROM employees", "BINARY_CI", "SELECT name COLLATE BINARY_CI FROM employees"],
+      ["SET TRANSACTION NAME @value", "'test'", "SET TRANSACTION NAME 'test'"],
+      ["DECLARE v NUMBER; BEGIN EXECUTE IMMEDIATE 'BEGIN :x := 1; END;' USING OUT @value; END;", "v", "DECLARE v NUMBER; BEGIN EXECUTE IMMEDIATE 'BEGIN :x := 1; END;' USING OUT v; END;"],
+      ["BEGIN FOR i IN REVERSE @value .. 10 LOOP NULL; END LOOP; END;", "1", "BEGIN FOR i IN REVERSE 1 .. 10 LOOP NULL; END LOOP; END;"],
+      ["SAVEPOINT @value", "sp1", "SAVEPOINT sp1"],
+      ["DECLARE e EXCEPTION; BEGIN RAISE @value; END;", "e", "DECLARE e EXCEPTION; BEGIN RAISE e; END;"],
+      ["BEGIN GOTO @value; <<finish>> NULL; END;", "finish", "BEGIN GOTO finish; <<finish>> NULL; END;"],
+      ["BEGIN <<outer_loop>> LOOP EXIT @value; END LOOP; END;", "outer_loop", "BEGIN <<outer_loop>> LOOP EXIT outer_loop; END LOOP; END;"],
+      ["BEGIN <<outer_loop>> FOR i IN 1..2 LOOP CONTINUE @value WHEN i = 1; END LOOP; END;", "outer_loop", "BEGIN <<outer_loop>> FOR i IN 1..2 LOOP CONTINUE outer_loop WHEN i = 1; END LOOP; END;"],
+      ["SELECT 1, INTERVAL @value DAY FROM DUAL", "'1'", "SELECT 1, INTERVAL '1' DAY FROM DUAL"],
+      ["SELECT 1, CASE @value WHEN 1 THEN 2 ELSE 3 END FROM DUAL", "1", "SELECT 1, CASE 1 WHEN 1 THEN 2 ELSE 3 END FROM DUAL"],
+      ["SELECT 1, TIMESTAMP @value FROM DUAL", "'2026-10-09 00:00:00'", "SELECT 1, TIMESTAMP '2026-10-09 00:00:00' FROM DUAL"],
+      ["SELECT JSON_OBJECT('first' VALUE 1, KEY @value VALUE 2) FROM DUAL", "'k'", "SELECT JSON_OBJECT('first' VALUE 1, KEY 'k' VALUE 2) FROM DUAL"],
+      ["DECLARE v NUMBER; BEGIN EXECUTE IMMEDIATE 'BEGIN :x := 1; :y := 2; END;' USING OUT v, OUT @value; END;", "v", "DECLARE v NUMBER; BEGIN EXECUTE IMMEDIATE 'BEGIN :x := 1; :y := 2; END;' USING OUT v, OUT v; END;"],
+    ])("keeps expression parameters in %s", (sql, value, expected) => {
+      expect(extractSqlParameters(sql, { databaseType })).toEqual(["value"]);
+      expect(substituteSqlParameters(sql, { value: { kind: "raw", value } }, { databaseType })).toBe(expected);
+    });
+  });
+
+  it.each([" ", ""])("keeps Dameng THEN%s template calls as real parameters", (separator) => {
+    const sql = `SELECT CASE WHEN 1=1 THEN${separator}@value(1) ELSE 0 END FROM DUAL`;
+    expect(extractSqlParameters(sql, { databaseType: "dameng" })).toEqual(["value"]);
+    expect(substituteSqlParameters(sql, { value: { kind: "raw", value: "ABS" } }, { databaseType: "dameng" })).toBe(`SELECT CASE WHEN 1=1 THEN${separator}ABS(1) ELSE 0 END FROM DUAL`);
+  });
+
+  it("preserves a large expression of SQL/XML-keyword-named remote calls", () => {
+    const expression = Array.from({ length: 8000 }, (_, tokenIndex) => `${["content", "document", "passing"][tokenIndex % 3]}@LINK(1)`).join(" + ");
+    const sql = `SELECT ${expression} FROM DUAL WHERE id = :id`;
+    expect(extractSqlParameters(sql, { databaseType: "oracle" })).toEqual(["id"]);
+    expect(substituteSqlParameters(sql, { LINK: { kind: "raw", value: "WRONG" }, id: { kind: "number", value: "7" } }, { databaseType: "oracle" })).toBe(sql.replace(":id", "7"));
+  });
+
+  describe.each(["oracle", "oceanbase-oracle"] as const)("%s PL/SQL function templates", (databaseType) => {
+    it.each(["BEGIN @fn('ok'); END;", "BEGIN LOOP @fn('ok'); EXIT; END LOOP; END;", "BEGIN IF @fn(1)>0 THEN NULL; ELSIF @fn(2)>0 THEN NULL; END IF; END;", "BEGIN WHILE @fn(1)>0 LOOP NULL; END LOOP; END;", "BEGIN RETURN @fn(1); END;"])(
+      "keeps function templates after control keywords in %s",
+      (sql) => {
+        expect(extractSqlParameters(sql, { databaseType })).toEqual(["fn"]);
+        expect(substituteSqlParameters(sql, { fn: { kind: "raw", value: "test_fn" } }, { databaseType })).toBe(sql.replaceAll("@fn", "test_fn"));
+      },
+    );
+
+    it.each(["begin", "loop", "elsif", "if", "while", "return"])("preserves qualified and quoted remote routines named %s", (name) => {
+      const sql = `BEGIN HR.${name}@LINK(1); "${name}"@LINK(1); END; SELECT * FROM ${name}@LINK`;
+      expect(extractSqlParameters(sql, { databaseType })).toEqual([]);
+      expect(substituteSqlParameters(sql, { LINK: { kind: "raw", value: "WRONG" } }, { databaseType })).toBe(sql);
+    });
+  });
+
+  it("preserves Dameng quoted THEN objects and qualified THEN routines", () => {
+    const sql = 'SELECT HR.then@LINK(:id) FROM "THEN"@LINK WHERE id = :id';
+    expect(extractSqlParameters(sql, { databaseType: "dameng" })).toEqual(["id"]);
+    expect(substituteSqlParameters(sql, { LINK: { kind: "raw", value: "WRONG" }, id: { kind: "number", value: "7" } }, { databaseType: "dameng" })).toBe('SELECT HR.then@LINK(7) FROM "THEN"@LINK WHERE id = 7');
+  });
+
+  it.each(["", " "])("preserves Dameng unquoted THEN tables separated by %j", (separator) => {
+    const sql = `SELECT * FROM then${separator}@LINK WHERE id = :id`;
+    expect(extractSqlParameters(sql, { databaseType: "dameng" })).toEqual(["id"]);
+    expect(substituteSqlParameters(sql, { LINK: { kind: "raw", value: "WRONG" }, id: { kind: "number", value: "7" } }, { databaseType: "dameng" })).toBe(`SELECT * FROM then${separator}@LINK WHERE id = 7`);
+  });
+
+  describe("Dameng database link separators", () => {
+    it.each(["", " ", "\t", "\n", "/* @ignored */", " /* first */ \n /* second */ ", "-- @ignored\n"])("preserves links separated by %j alongside same-name parameters", (separator) => {
+      for (const objectName of ["test.table_name", '"Hr"."Audit Log"', "订单", '"SELECT"']) {
+        const sql = `SELECT @id FROM ${objectName}${separator}@id WHERE id = :id AND tenant_id = @tenant_id`;
+        expect(extractSqlParameters(sql, { databaseType: "dameng" })).toEqual(["id", "tenant_id"]);
+        expect(substituteSqlParameters(sql, { id: { kind: "number", value: "7" }, tenant_id: { kind: "number", value: "3" } }, { databaseType: "dameng" })).toBe(`SELECT 7 FROM ${objectName}${separator}@id WHERE id = 7 AND tenant_id = 3`);
+      }
+    });
+
+    it.each([
+      ["SELECT * FROM test.remote_view /* link */ @dm1", [], "SELECT * FROM test.remote_view /* link */ @dm1"],
+      ["SELECT test.remote_fn /* link */ @dm1(:id) FROM DUAL", ["id"], "SELECT test.remote_fn /* link */ @dm1(7) FROM DUAL"],
+      ["CALL test.remote_proc /* link */ @dm1(@id)", ["id"], "CALL test.remote_proc /* link */ @dm1(7)"],
+      ["SELECT * FROM ACCESS /* link */ @dm1 WHERE id = :id", ["id"], "SELECT * FROM ACCESS /* link */ @dm1 WHERE id = 7"],
+    ] as const)("preserves links on remote objects in %s", (sql, names, expected) => {
+      expect(extractSqlParameters(sql, { databaseType: "dameng" })).toEqual(names);
+      expect(substituteSqlParameters(sql, { dm1: { kind: "number", value: "99" }, id: { kind: "number", value: "7" } }, { databaseType: "dameng" })).toBe(expected);
+    });
+
+    it.each([
+      ["SELECT TOP @count * FROM test.table_name @dm1", ["count"], "SELECT TOP 7 * FROM test.table_name @dm1"],
+      ["SELECT * FROM test.table_name @dm1 LIMIT @offset, @count", ["offset", "count"], "SELECT * FROM test.table_name @dm1 LIMIT 7, 7"],
+      ["SELECT CASE WHEN/* comment */@condition THEN @yes ELSE @no END FROM DUAL", ["condition", "yes", "no"], "SELECT CASE WHEN/* comment */7 THEN 7 ELSE 7 END FROM DUAL"],
+      ["BEGIN IF @condition THEN NULL; END IF; RETURN @result; END;", ["condition", "result"], "BEGIN IF 7 THEN NULL; END IF; RETURN 7; END;"],
+    ] as const)("keeps real parameters after Dameng keywords in %s", (sql, names, expected) => {
+      expect(extractSqlParameters(sql, { databaseType: "dameng" })).toEqual(names);
+      const values = Object.fromEntries(names.map((name) => [name, { kind: "number" as const, value: "7" }]));
+      expect(substituteSqlParameters(sql, values, { databaseType: "dameng" })).toBe(expected);
+    });
+
+    it("respects disabled parameter syntaxes without changing links", () => {
+      const sql = "SELECT @id FROM test.table_name /* link */ @id WHERE id = :id";
+      expect(extractSqlParameters(sql, { databaseType: "dameng", enabledSyntaxes: ["named"] })).toEqual(["id"]);
+      expect(substituteSqlParameters(sql, { id: { kind: "number", value: "7" } }, { databaseType: "dameng", enabledSyntaxes: ["named"] })).toBe("SELECT @id FROM test.table_name /* link */ @id WHERE id = 7");
+      expect(extractSqlParameters(sql, { databaseType: "dameng", enabledSyntaxes: [] })).toEqual([]);
+      expect(substituteSqlParameters(sql, { id: { kind: "number", value: "7" } }, { databaseType: "dameng", enabledSyntaxes: [] })).toBe(sql);
+    });
+
+    it.each([
+      ["SELECT DATE @value FROM DUAL", "'2026-10-10'", "SELECT DATE '2026-10-10' FROM DUAL"],
+      ["SELECT TIMESTAMP @value FROM DUAL", "'2026-10-10 12:00:00'", "SELECT TIMESTAMP '2026-10-10 12:00:00' FROM DUAL"],
+    ])("keeps Dameng datetime literal parameters in %s", (sql, value, expected) => {
+      expect(extractSqlParameters(sql, { databaseType: "dameng" })).toEqual(["value"]);
+      expect(substituteSqlParameters(sql, { value: { kind: "raw", value } }, { databaseType: "dameng" })).toBe(expected);
+    });
+  });
+
+  it.each(["postgres", "sqlserver", "mysql"] as const)("keeps separated at-sign parameters unchanged for %s", (databaseType) => {
+    const sql = "SELECT * FROM employees /* comment */ @LINK WHERE id = :id";
+    expect(extractSqlParameters(sql, { databaseType })).toEqual(["LINK", "id"]);
+    expect(substituteSqlParameters(sql, { LINK: { kind: "number", value: "9" }, id: { kind: "number", value: "7" } }, { databaseType })).toBe("SELECT * FROM employees /* comment */ 9 WHERE id = 7");
+  });
+
+  it("describes each placeholder syntax for the parameter dialog", () => {
+    const sql = "select ? as a, :named as b, ${shell_name} as c, #{mybatis_name} as d, @sql_server_name as e, &substitution_name as f";
+    expect(extractSqlParameterDescriptors(sql, { databaseType: "oracle" })).toEqual([
+      { key: "?1", name: "?1", syntax: "positional", token: "?" },
+      { key: "named", name: "named", syntax: "named", token: ":named" },
+      { key: "shell_name", name: "shell_name", syntax: "shell", token: "${shell_name}" },
+      { key: "mybatis_name", name: "mybatis_name", syntax: "mybatis", token: "#{mybatis_name}" },
+      { key: "sql_server_name", name: "sql_server_name", syntax: "sqlserver", token: "@sql_server_name" },
+      { key: "substitution_name", name: "substitution_name", syntax: "substitution", token: "&substitution_name" },
+    ]);
+  });
+
+  it("ignores declared SQL Server variables and system variables", () => {
+    const sql = `
+      declare @id int = 1, @name nvarchar(50);
+      select @@version, @id, @name, @input_value
+    `;
+    expect(extractSqlParameters(sql)).toEqual(["input_value"]);
+  });
+
+  it("ignores variables assigned by SET statements", () => {
+    const sql = `
+      set @date_start = '2026-07-04 00:00:00';
+      select * from fin_pur_payment AS fp where fp.create_time < @date_start and fp.tenant_id = @tenant_id
+    `;
+    expect(extractSqlParameters(sql)).toEqual(["tenant_id"]);
+  });
+
+  it("ignores multiple variables assigned by SET statements", () => {
+    const sql = `
+      set @date_start := '2026-07-01', @date_end = '2026-07-31';
+      select * from orders where created_at between @date_start and @date_end and tenant_id = @tenant_id
+    `;
+    expect(extractSqlParameters(sql)).toEqual(["tenant_id"]);
+  });
+
+  it("ignores variables assigned by SELECT statements", () => {
+    const sql = `
+      select @date_start := min(created_at), @date_end = max(created_at) from orders;
+      select * from orders where created_at between @date_start and @date_end and tenant_id = @tenant_id
+    `;
+    expect(extractSqlParameters(sql)).toEqual(["tenant_id"]);
+  });
+
+  it("ignores MySQL user variables targeted by SELECT INTO", () => {
+    const sql = `
+      select project_id,
+             year(date_sub(review_date, interval 1 month)),
+             month(date_sub(review_date, interval 1 month))
+        into @project_id, @year, @month
+        from cms_dynamic_cost_review
+       where id = '9f03cb27-a553-11f1-8af2-48dc2d090a1c';
+      select @project_id, @year, @month;
+    `;
+
+    expect(extractSqlParameters(sql, { databaseType: "mysql" })).toEqual([]);
+  });
+
+  it("keeps ordinary MySQL template parameters around SELECT INTO targets", () => {
+    const sql = `
+      select project_id from cms_dynamic_cost_review where id = @input_id into @project_id;
+      select @project_id where @tenant_id > 0;
+    `;
+
+    expect(extractSqlParameters(sql, { databaseType: "mysql" })).toEqual(["input_id", "tenant_id"]);
+  });
+
+  it("ignores MySQL user variables assigned by GET DIAGNOSTICS", () => {
+    const sql = `
+      get diagnostics condition 1 @err_state = returned_sqlstate, @err_msg = message_text;
+      select concat('failed: ', @err_state, ' ', @err_msg) as result;
+    `;
+
+    expect(extractSqlParameters(sql, { databaseType: "mysql" })).toEqual([]);
+  });
+
+  it("ignores GET CURRENT/STACKED DIAGNOSTICS targets and the statement-level row count", () => {
+    const sql = `
+      get diagnostics @affected = row_count;
+      get current diagnostics condition 1 @current_state = returned_sqlstate;
+      get stacked diagnostics condition 1 @stacked_state = returned_sqlstate;
+      select @affected, @current_state, @stacked_state;
+    `;
+
+    expect(extractSqlParameters(sql, { databaseType: "mysql" })).toEqual([]);
+  });
+
+  it("keeps ordinary MySQL template parameters next to GET DIAGNOSTICS targets", () => {
+    const sql = `
+      get diagnostics condition 1 @err_msg = message_text;
+      select * from audit_log where tenant_id = @tenant_id and note = @err_msg;
+    `;
+
+    expect(extractSqlParameters(sql, { databaseType: "mysql" })).toEqual(["tenant_id"]);
+  });
+
+  it("keeps a template parameter on a column named get", () => {
+    const sql = "select get from api_methods where tenant_id = @tenant_id";
+
+    expect(extractSqlParameters(sql, { databaseType: "mysql" })).toEqual(["tenant_id"]);
+  });
+
+  it("ignores SQL Server procedure parameters declared in routine definitions", () => {
+    const sql = `
+      create procedure dbo.search_orders
+        @date_start datetime,
+        @status nvarchar(20) = N'paid'
+      as
+      begin
+        select * from orders where created_at >= @date_start and status = @status and tenant_id = @tenant_id;
+      end
+    `;
+    expect(extractSqlParameters(sql)).toEqual(["tenant_id"]);
+  });
+
+  it("ignores SQL Server function parameters declared in routine definitions", () => {
+    const sql = `
+      create function dbo.order_count(@date_start datetime, @status nvarchar(20))
+      returns int
+      as
+      begin
+        return (select count(*) from orders where created_at >= @date_start and status = @status and tenant_id = @tenant_id);
+      end
+    `;
+    expect(extractSqlParameters(sql)).toEqual(["tenant_id"]);
+  });
+
+  it("keeps template parameters in non-routine CREATE statements", () => {
+    const sql = "create table #orders (tenant_id int default @tenant_id);";
+    expect(extractSqlParameters(sql)).toEqual(["tenant_id"]);
+  });
+
+  it("ignores named stored procedure arguments while preserving template values", () => {
+    const sql = "exec dbo.search_orders @date_start = '2026-07-04', @status = @status_value, @tenant_id = @tenant_id";
+    expect(extractSqlParameters(sql)).toEqual(["status_value", "tenant_id"]);
+  });
+
+  it("ignores declared SQL Server table variables", () => {
+    const sql = `
+      declare @ids table (id int);
+      insert into @ids values (1);
+      select * from @ids where id = @input_id;
+    `;
+    expect(extractSqlParameters(sql)).toEqual(["input_id"]);
+  });
+
+  it("ignores SQL Server and MySQL system variables", () => {
+    const sql = "select @@ROWCOUNT, @@IDENTITY, @@SERVERNAME, @@session.sql_mode, @@global.time_zone, @input_value";
+    expect(extractSqlParameters(sql)).toEqual(["input_value"]);
+  });
+
+  it("extracts template parameters from ordinary SELECT filters", () => {
+    const sql = `
+      select * from fin_pur_payment
+      where tenant_id = @tenant_id;
+    `;
+    expect(extractSqlParameters(sql)).toEqual(["tenant_id"]);
+  });
+
+  it("extracts remaining template parameters after SET-defined variables", () => {
+    const sql = `
+      set @date_start = '2026-07-04 00:00:00';
+
+      select * from fin_pur_payment
+      where create_time < @date_start
+        and tenant_id = @tenant_id;
+    `;
+    expect(extractSqlParameters(sql)).toEqual(["tenant_id"]);
+  });
+
+  it("does not treat native variable updates as template parameters", () => {
+    const sql = "set @n = 1; set @n = @n + 1; select @n;";
+    expect(extractSqlParameters(sql)).toEqual([]);
+  });
+
+  it("ignores MySQL dynamic SQL variables used by prepared statements", () => {
+    const sql = `
+      SET @sql = IF(
+        (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE()
+           AND TABLE_NAME = 'oem_user_group'
+           AND COLUMN_NAME = 'group') = 0,
+        'ALTER TABLE \`oem_user_group\` ADD COLUMN \`group\` varchar(64) DEFAULT NULL COMMENT ''users.group'' AFTER \`oem_id\`',
+        'SELECT 1'
+      );
+      PREPARE stmt FROM @sql;
+      EXECUTE stmt;
+      DEALLOCATE PREPARE stmt;
+    `;
+    expect(extractSqlParameters(sql)).toEqual([]);
+  });
+
+  it("stops SQL Server declaration scanning when a new statement starts without a semicolon", () => {
+    const sql = `
+      declare @id int = 1
+      select @id, @tenant_id
+    `;
+    expect(extractSqlParameters(sql)).toEqual(["tenant_id"]);
+  });
+
+  it("does not treat PostgreSQL casts or assignment operators as named parameters", () => {
+    const sql = "select value::int, value := 1, :actual_value";
+    expect(extractSqlParameters(sql)).toEqual(["actual_value"]);
+  });
+
+  it("ignores Doris STRUCT field type separators", () => {
+    const sql = `
+      create table \`events\` (
+        \`field0\` int not null comment 'field 0',
+        \`field_list\` array<struct<field1:smallint, field2:int, field3:decimal(16,5), field4:varchar(255)>> comment 'field list'
+      )
+      engine = olap
+      properties ("replication_num" = "1");
+    `;
+
+    expect(extractSqlParameters(sql, { databaseType: "doris" })).toEqual([]);
+    // SelectDB connections use the MySQL db type with a SelectDB driver profile.
+    expect(extractSqlParameters(sql, { databaseType: "mysql" })).toEqual([]);
+    expect(substituteSqlParameters(sql, {}, { databaseType: "doris" })).toBe(sql);
+  });
+
+  it("keeps named parameters that are not STRUCT field type separators", () => {
+    const sql = `
+      create table \`events\` (
+        \`field_list\` array<struct<
+          field1:smallint,
+          nested:struct<\`field2\` /* field type */ :decimal(:precision, :scale)>
+        >>
+      ) properties ("buckets" = :bucket_count);
+    `;
+
+    expect(extractSqlParameters(sql, { databaseType: "doris" })).toEqual(["precision", "scale", "bucket_count"]);
+    expect(
+      substituteSqlParameters(
+        sql,
+        {
+          precision: { kind: "number", value: "16" },
+          scale: { kind: "number", value: "5" },
+          bucket_count: { kind: "number", value: "8" },
+        },
+        { databaseType: "doris" },
+      ),
+    ).toBe(`
+      create table \`events\` (
+        \`field_list\` array<struct<
+          field1:smallint,
+          nested:struct<\`field2\` /* field type */ :decimal(16, 5)>
+        >>
+      ) properties ("buckets" = 8);
+    `);
+  });
+
+  it("does not let an unterminated complex type hide a later named parameter", () => {
+    const sql = "create table `broken` (value struct<field:int,\nselect :real;";
+
+    expect(extractSqlParameters(sql, { databaseType: "doris" })).toEqual(["real"]);
+    expect(substituteSqlParameters(sql, { real: { kind: "number", value: "7" } }, { databaseType: "doris" })).toBe("create table `broken` (value struct<field:int,\nselect 7;");
+  });
+
+  it("ignores DuckDB compact struct literal field separators", () => {
+    const sql = `
+      select {
+        'compact':column,
+        'spaced' : other_column,
+        bare_key:third_column,
+        'nested':{'inner':nested_column},
+        'listed':[{'item':list_column}],
+        'mapped':map(['entry'], [{'value':mapped_column}])
+      }
+      from t
+    `;
+
+    expect(extractSqlParameters(sql, { databaseType: "duckdb" })).toEqual([]);
+    expect(substituteSqlParameters(sql, {}, { databaseType: "duckdb" })).toBe(sql);
+  });
+
+  it("keeps real DuckDB named placeholders in struct values and outside structs", () => {
+    const sql = "select {'key': :value, 'nested': {'inner':coalesce(:nested_value, fallback_column)}}, :outside from t";
+
+    expect(extractSqlParameters(sql, { databaseType: "duckdb" })).toEqual(["value", "nested_value", "outside"]);
+    expect(
+      substituteSqlParameters(
+        sql,
+        {
+          value: { kind: "number", value: "1" },
+          nested_value: { kind: "number", value: "2" },
+          outside: { kind: "number", value: "3" },
+        },
+        { databaseType: "duckdb" },
+      ),
+    ).toBe("select {'key': 1, 'nested': {'inner':coalesce(2, fallback_column)}}, 3 from t");
+  });
+
+  it("does not globally hide DuckDB named placeholders inside braces", () => {
+    const sql = "select {'key':column}, {fn coalesce(:inside, 1)}, :outside";
+
+    expect(extractSqlParameters(sql, { databaseType: "duckdb" })).toEqual(["inside", "outside"]);
+    expect(extractSqlParameters(sql, { databaseType: "postgres" })).toEqual(["column", "inside", "outside"]);
+  });
+
+  it("ignores DuckDB struct separators around comments and quoted values", () => {
+    const sql = `
+      select {
+        'key' /* field separator */ :column,
+        'text':'literal :ignored',
+        'call':coalesce(:value, {'inner':inner_column})
+      }, :outside
+      -- {'comment':comment_column}
+    `;
+
+    expect(extractSqlParameters(sql, { databaseType: "duckdb" })).toEqual(["value", "outside"]);
+  });
+
+  it("falls back conservatively for an unterminated DuckDB struct literal", () => {
+    const sql = "select {'key':column, 'nested':{'inner':nested_column}\nunion all select :later";
+
+    expect(extractSqlParameters(sql, { databaseType: "duckdb" })).toEqual(["column", "nested_column", "later"]);
+  });
+
+  it("ignores compact DuckDB prefix alias separators", () => {
+    const sql = 'select total:price * quantity, "order":sum(amount) from sales';
+
+    expect(extractSqlParameters(sql, { databaseType: "duckdb" })).toEqual([]);
+    expect(substituteSqlParameters(sql, {}, { databaseType: "duckdb" })).toBe(sql);
+    expect(extractSqlParameters(sql, { databaseType: "postgres" })).toEqual(["price", "sum"]);
+  });
+
+  it("keeps named parameters inside DuckDB prefix alias expressions", () => {
+    const sql = "from r:range(:row_count) select total:r.range + :offset";
+
+    expect(extractSqlParameters(sql, { databaseType: "duckdb" })).toEqual(["row_count", "offset"]);
+    expect(
+      substituteSqlParameters(
+        sql,
+        {
+          row_count: { kind: "number", value: "3" },
+          offset: { kind: "number", value: "10" },
+        },
+        { databaseType: "duckdb" },
+      ),
+    ).toBe("from r:range(3) select total:r.range + 10");
+  });
+
+  it("ignores Doris VARIANT field type separators", () => {
+    const sql = `
+      create table \`events\` (
+        value variant<
+          match_name 'path_1':decimal(:precision, :scale),
+          match_name_glob 'meta*':bigint,
+          properties('variant_max_subcolumns_count' = :property_value)
+        >
+      );
+    `;
+
+    expect(extractSqlParameters(sql, { databaseType: "doris" })).toEqual(["precision", "scale", "property_value"]);
+    expect(
+      substituteSqlParameters(
+        sql,
+        {
+          precision: { kind: "number", value: "16" },
+          scale: { kind: "number", value: "5" },
+          property_value: { kind: "string", value: "2048" },
+        },
+        { databaseType: "doris" },
+      ),
+    ).toBe(`
+      create table \`events\` (
+        value variant<
+          match_name 'path_1':decimal(16, 5),
+          match_name_glob 'meta*':bigint,
+          properties('variant_max_subcolumns_count' = '2048')
+        >
+      );
+    `);
+  });
+
+  it("ignores compact MySQL routine labels in cursor procedures", () => {
+    const sql = `
+      CREATE PROCEDURE process_orders()
+      BEGIN
+        DECLARE done INT DEFAULT FALSE;
+        DECLARE order_id INT;
+        DECLARE cur_orders CURSOR FOR SELECT id FROM orders;
+        DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+
+        OPEN cur_orders;
+        read_loop:LOOP
+          FETCH cur_orders INTO order_id;
+          IF done THEN
+            LEAVE read_loop;
+          END IF;
+        END LOOP read_loop;
+        CLOSE cur_orders;
+      END
+    `;
+
+    expect(extractSqlParameters(sql, { databaseType: "mysql" })).toEqual([]);
+    expect(substituteSqlParameters(sql, {}, { databaseType: "mysql" })).toBe(sql);
+  });
+
+  it("limits MySQL routine label handling to label contexts", () => {
+    const labels = "BEGIN outer_block:BEGIN retry_loop:WHILE ready DO repeat_block:REPEAT work_loop:LOOP END LOOP work_loop; END";
+
+    expect(extractSqlParameters(labels, { databaseType: "mysql" })).toEqual([]);
+    expect(extractSqlParameters("SELECT * FROM jobs WHERE state = :LOOP", { databaseType: "mysql" })).toEqual(["LOOP"]);
+    expect(extractSqlParameters("BEGIN SELECT :LOOP; END", { databaseType: "mysql" })).toEqual(["LOOP"]);
+    expect(extractSqlParameters("read_loop:LOOP")).toEqual(["LOOP"]);
+  });
+
+  it("ignores HANA SQLScript variable references", () => {
+    const sql = "DO BEGIN Dummy1 = SELECT 1 FROM DUMMY; SELECT * FROM :Dummy1; END";
+    expect(extractSqlParameters(sql, { databaseType: "saphana" })).toEqual([]);
+  });
+});
+
+describe("Oracle, OceanBase Oracle and Dameng trigger pseudo-records", () => {
+  it.each(["oracle", "oceanbase-oracle"] as const)("ignores %s default pseudo-record fields while keeping ordinary parameters", (databaseType) => {
+    const sql = `
+      CREATE OR REPLACE TRIGGER audit_orders
+      BEFORE UPDATE ON orders
+      FOR EACH ROW
+      BEGIN
+        :NEW.updated_at := current_timestamp;
+        audit_change(:old.id, :PaReNt.order_id, :tenant_id);
+      END;
+    `;
+
+    expect(extractSqlParameters(sql, { databaseType })).toEqual(["tenant_id"]);
+  });
+
+  it("ignores Dameng default pseudo-record fields case-insensitively", () => {
+    const sql = `
+      create trigger audit_orders after update on orders
+      for each row
+      begin
+        insert into order_audit values (:new.id, :OLD.status, :EventInfo.event_type, :actor_id);
+      end;
+    `;
+
+    expect(extractSqlParameters(sql, { databaseType: "dameng" })).toEqual(["actor_id"]);
+  });
+
+  it.each(["oracle", "oceanbase-oracle"] as const)("parses %s REFERENCING aliases without disabling default pseudo-records", (databaseType) => {
+    const sql = `
+      create or replace trigger audit_orders
+      before update on orders
+      referencing old row as previous new as current
+      for each row
+      begin
+        audit_change(:previous.id, :CURRENT.status, :old.id, :new.status, :reason);
+      end;
+    `;
+
+    expect(extractSqlParameters(sql, { databaseType })).toEqual(["reason"]);
+  });
+
+  it.each(["oracle", "oceanbase-oracle", "dameng"] as const)("replaces ordinary %s trigger parameters but preserves pseudo-record fields", (databaseType) => {
+    const sql = `create trigger audit_orders before update on orders
+      referencing new as inserted old as deleted
+      for each row begin
+        :inserted.updated_by := :user_id;
+        audit_change(:deleted.id, :NEW.id, :note);
+      end;`;
+
+    expect(
+      substituteSqlParameters(
+        sql,
+        {
+          user_id: { kind: "number", value: "42" },
+          note: { kind: "string", value: "manual" },
+        },
+        { databaseType },
+      ),
+    ).toBe(`create trigger audit_orders before update on orders
+      referencing new as inserted old as deleted
+      for each row begin
+        :inserted.updated_by := 42;
+        audit_change(:deleted.id, :NEW.id, 'manual');
+      end;`);
+  });
+
+  it("does not apply trigger rules to other databases or statements outside triggers", () => {
+    const oracleScript = `create trigger audit_orders before update on orders
+      for each row begin :new.id := :value; end;
+      /
+      select :new, :outside_value from dual;`;
+
+    expect(extractSqlParameters(oracleScript, { databaseType: "oracle" })).toEqual(["value", "new", "outside_value"]);
+    expect(extractSqlParameters(oracleScript, { databaseType: "oceanbase-oracle" })).toEqual(["value", "new", "outside_value"]);
+    expect(extractSqlParameters("create trigger t before update on x begin :NEW.id := :value; end;", { databaseType: "postgres" })).toEqual(["NEW", "value"]);
+    expect(extractSqlParameters("create trigger t before update on x begin NEW.id := :value; end;", { databaseType: "postgres" })).toEqual(["value"]);
+  });
+
+  it.each(["oracle", "oceanbase-oracle", "dameng"] as const)("keeps %s assignment, casts, comments, strings, and non-field pseudo-record tokens unchanged", (databaseType) => {
+    const sql = `create trigger audit_orders before update on orders
+      for each row begin
+        :new := :actual_value;
+        value := :NEW.id;
+        select value::int into :target_value from dual;
+        -- :OLD.comment_field
+        note := ':EVENTINFO.string_field';
+      end;`;
+
+    expect(extractSqlParameters(sql, { databaseType })).toEqual(["new", "actual_value", "target_value"]);
+  });
+});
+
+describe("substituteSqlParameters", () => {
+  it("preserves empty raw placeholders", () => {
+    const sql = "select ${raw_value}, '${raw_value}', 'prefix ${raw_value} suffix'";
+
+    expect(substituteSqlParameters(sql, { raw_value: { kind: "raw", value: "  " } })).toBe(sql);
+  });
+
+  it("substitutes dotted names by their complete key", () => {
+    const sql = "select ${params.id}, #{params.profile.name}, 'prefix${params.label}'";
+    expect(
+      substituteSqlParameters(sql, {
+        "params.id": { kind: "number", value: "7" },
+        "params.profile.name": { kind: "string", value: "Alice" },
+        "params.label": { kind: "string", value: "O'Reilly" },
+      }),
+    ).toBe("select 7, 'Alice', 'prefixO''Reilly'");
+  });
+
+  it("extracts a MyBatis foreach collection instead of its item placeholder", () => {
+    const sql = `select * from tasks where task_id in
+      <foreach collection="taskIds" item="taskId" open="(" separator="," close=")">
+        #{taskId}
+      </foreach>`;
+
+    expect(extractSqlParameterDescriptors(sql, { enabledSyntaxes: ["mybatis"] })).toEqual([{ key: "taskIds", name: "taskIds", syntax: "mybatis", token: "<foreach>", collection: true }]);
+  });
+
+  it("expands a MyBatis foreach JSON string collection with escaped SQL literals", () => {
+    const sql = `select * from tasks where task_id in
+      <foreach collection='taskIds' item='taskId' open='(' separator=',' close=')'>#{taskId}</foreach>`;
+
+    expect(substituteSqlParameters(sql, { taskIds: { kind: "string", value: `["A", "O'Reilly"]` } }, { databaseType: "oracle", enabledSyntaxes: ["mybatis"] })).toBe("select * from tasks where task_id in\n      ('A','O''Reilly')");
+  });
+
+  it("expands comma-separated MyBatis foreach values using the selected item type", () => {
+    const sql = 'select * from tasks where task_id in <foreach collection="taskIds" item="taskId" open="(" separator=", " close=")">#{taskId}</foreach>';
+
+    expect(substituteSqlParameters(sql, { taskIds: { kind: "number", value: "1, 2, 3" } }, { enabledSyntaxes: ["mybatis"] })).toBe("select * from tasks where task_id in (1, 2, 3)");
+  });
+
+  it("renders an empty MyBatis foreach collection as a safe legal IN list", () => {
+    const sql = 'select * from tasks where task_id in <foreach collection="taskIds" item="taskId" open="(" separator="," close=")">#{taskId}</foreach>';
+
+    expect(substituteSqlParameters(sql, { taskIds: { kind: "string", value: "[]" } }, { enabledSyntaxes: ["mybatis"] })).toBe("select * from tasks where task_id in (NULL)");
+    expect(substituteSqlParameters(sql, { taskIds: { kind: "string", value: "[1,2" } }, { enabledSyntaxes: ["mybatis"] })).toBe("select * from tasks where task_id in (NULL)");
+    expect(substituteSqlParameters(sql, { taskIds: { kind: "string", value: '[{"id":1}]' } }, { enabledSyntaxes: ["mybatis"] })).toBe("select * from tasks where task_id in (NULL)");
+  });
+
+  it("substitutes other placeholders inside each MyBatis foreach body", () => {
+    const sql = 'select * from task_pairs where (task_id, tenant_id) in <foreach collection="taskIds" item="taskId" open="(" separator="," close=")">(#{taskId}, #{tenantId})</foreach>';
+
+    expect(substituteSqlParameters(sql, { taskIds: { kind: "number", value: "[1,2]" }, tenantId: { kind: "number", value: "9" } }, { enabledSyntaxes: ["mybatis"] })).toBe("select * from task_pairs where (task_id, tenant_id) in ((1, 9),(2, 9))");
+    expect(extractSqlParameterDescriptors(sql, { enabledSyntaxes: ["mybatis"] })).toEqual([
+      { key: "taskIds", name: "taskIds", syntax: "mybatis", token: "<foreach>", collection: true },
+      { key: "tenantId", name: "tenantId", syntax: "mybatis", token: "#{tenantId}" },
+    ]);
+  });
+
+  it("uses the zero-based MyBatis foreach index without exposing it as a global parameter", () => {
+    const sql = 'select * from task_pairs where (position, task_id) in <foreach collection="taskIds" item="taskId" index="idx" open="(" separator="," close=")">(#{idx},#{taskId})</foreach>';
+
+    expect(extractSqlParameterDescriptors(sql, { enabledSyntaxes: ["mybatis"] })).toEqual([{ key: "taskIds", name: "taskIds", syntax: "mybatis", token: "<foreach>", collection: true }]);
+    expect(substituteSqlParameters(sql, { taskIds: { kind: "number", value: "[10,20]" }, idx: { kind: "number", value: "99" } }, { enabledSyntaxes: ["mybatis"] })).toBe("select * from task_pairs where (position, task_id) in ((0,10),(1,20))");
+  });
+
+  it("ignores foreach-like tags in SQL strings and comments when matching the closing tag", () => {
+    const sql = `select * from tasks where task_id in <foreach collection="taskIds" item="taskId" open="(" separator="," close=")">
+      #{taskId} /* </foreach> */ || '<foreach collection="fake" item="value">'
+      -- <foreach collection="fake" item="value">
+    </foreach>`;
+
+    expect(substituteSqlParameters(sql, { taskIds: { kind: "number", value: "[1,2]" } }, { enabledSyntaxes: ["mybatis"] })).toBe(`select * from tasks where task_id in (
+      1 /* </foreach> */ || '<foreach collection="fake" item="value">'
+      -- <foreach collection="fake" item="value">
+    ,
+      2 /* </foreach> */ || '<foreach collection="fake" item="value">'
+      -- <foreach collection="fake" item="value">
+    )`);
+  });
+
+  it("leaves MyBatis foreach tags untouched when MyBatis substitution is disabled", () => {
+    const sql = 'select * from tasks where task_id in <foreach collection="taskIds" item="taskId" open="(" separator="," close=")">#{taskId}</foreach>';
+
+    expect(extractSqlParameterDescriptors(sql, { enabledSyntaxes: ["shell"] })).toEqual([]);
+    expect(substituteSqlParameters(sql, {}, { enabledSyntaxes: ["shell"] })).toBe(sql);
+  });
+
+  it("strips a MyBatis <where> wrapper and prefixes its body with WHERE", () => {
+    const sql = "select * from tasks <where> status = #{status} </where>";
+
+    expect(substituteSqlParameters(sql, { status: { kind: "string", value: "open" } }, { enabledSyntaxes: ["mybatis"] })).toBe("select * from tasks WHERE status = 'open'");
+  });
+
+  it("strips a leading AND/OR from a MyBatis <where> body, case-insensitively", () => {
+    const andSql = "select * from tasks <where> AND status = #{status} </where>";
+    const orSql = "select * from tasks <where> or status = #{status} </where>";
+
+    expect(substituteSqlParameters(andSql, { status: { kind: "string", value: "open" } }, { enabledSyntaxes: ["mybatis"] })).toBe("select * from tasks WHERE status = 'open'");
+    expect(substituteSqlParameters(orSql, { status: { kind: "string", value: "open" } }, { enabledSyntaxes: ["mybatis"] })).toBe("select * from tasks WHERE status = 'open'");
+  });
+
+  it("renders an empty MyBatis <where> body as no WHERE clause at all", () => {
+    const sql = "select * from tasks <where>   </where> order by id";
+
+    expect(substituteSqlParameters(sql, {}, { enabledSyntaxes: ["mybatis"] })).toBe("select * from tasks  order by id");
+  });
+
+  it("does not surface <where> itself as a SQL parameter, but does surface placeholders nested inside it", () => {
+    const sql = "select * from tasks <where> status = #{status} </where>";
+
+    expect(extractSqlParameterDescriptors(sql, { enabledSyntaxes: ["mybatis"] })).toEqual([{ key: "status", name: "status", syntax: "mybatis", token: "#{status}" }]);
+  });
+
+  it("resolves a MyBatis <foreach> nested inside a <where> wrapper", () => {
+    const sql = 'select * from tasks <where> task_id in <foreach collection="taskIds" item="taskId" open="(" separator="," close=")">#{taskId}</foreach> </where>';
+
+    expect(extractSqlParameterDescriptors(sql, { enabledSyntaxes: ["mybatis"] })).toEqual([{ key: "taskIds", name: "taskIds", syntax: "mybatis", token: "<foreach>", collection: true }]);
+    expect(substituteSqlParameters(sql, { taskIds: { kind: "number", value: "[1,2]" } }, { enabledSyntaxes: ["mybatis"] })).toBe("select * from tasks WHERE task_id in (1,2)");
+  });
+
+  it("ignores where-like tags in SQL strings and comments when matching the closing tag", () => {
+    const sql = `select * from tasks <where>
+      status = #{status} /* </where> */ || '<where>fake</where>'
+      -- <where>fake</where>
+    </where>`;
+
+    expect(substituteSqlParameters(sql, { status: { kind: "string", value: "open" } }, { enabledSyntaxes: ["mybatis"] })).toBe(`select * from tasks WHERE status = 'open' /* </where> */ || '<where>fake</where>'
+      -- <where>fake</where>`);
+  });
+
+  it("leaves MyBatis <where> tags untouched when MyBatis substitution is disabled", () => {
+    const sql = "select * from tasks <where> status = #{status} </where>";
+
+    expect(extractSqlParameterDescriptors(sql, { enabledSyntaxes: ["shell"] })).toEqual([]);
+    expect(substituteSqlParameters(sql, {}, { enabledSyntaxes: ["shell"] })).toBe(sql);
+  });
+
+  it("decodes XML comparison entities when substituting MyBatis parameters", () => {
+    const sql = "select * from orders where created_at &gt;= #{start} and created_at &lt; #{end} and owner_id = #{owner_id} or reviewer_id = #{owner_id}";
+
+    expect(
+      substituteSqlParameters(
+        sql,
+        {
+          start: { kind: "string", value: "2026-01-01" },
+          end: { kind: "string", value: "2026-02-01" },
+          owner_id: { kind: "number", value: "7" },
+        },
+        { enabledSyntaxes: ["mybatis"] },
+      ),
+    ).toBe("select * from orders where created_at >= '2026-01-01' and created_at < '2026-02-01' and owner_id = 7 or reviewer_id = 7");
+  });
+
+  it("only decodes comparison entities in executable MyBatis SQL", () => {
+    const sql = "select '&amp;', '&quot;', '&apos;', '&amp;lt;', '&LT;', '&lt', '&lt;source&gt;', #{raw_value}, #{string_value} where score &gt; #{minimum} /* &lt;source-comment&gt; */";
+
+    expect(
+      substituteSqlParameters(
+        sql,
+        {
+          raw_value: { kind: "raw", value: "'&lt;raw&gt;'" },
+          string_value: { kind: "string", value: "&lt;string&gt;" },
+          minimum: { kind: "number", value: "10" },
+        },
+        { enabledSyntaxes: ["mybatis"] },
+      ),
+    ).toBe("select '&amp;', '&quot;', '&apos;', '&amp;lt;', '&LT;', '&lt', '&lt;source&gt;', '&lt;raw&gt;', '&lt;string&gt;' where score > 10 /* &lt;source-comment&gt; */");
+  });
+
+  it("preserves comparison entities in quoted identifiers, comments, and dollar-quoted strings", () => {
+    const sql = `select "a&lt;b", \`c&gt;d\`, [e&lt;f], $$g&gt;h$$, #{id}
+      where score &gt; 0 /* &lt;block&gt; */ -- &gt; line
+      and score &lt; 10`;
+
+    expect(substituteSqlParameters(sql, { id: { kind: "number", value: "7" } }, { enabledSyntaxes: ["mybatis"] })).toBe(`select "a&lt;b", \`c&gt;d\`, [e&lt;f], $$g&gt;h$$, 7
+      where score > 0 /* &lt;block&gt; */ -- &gt; line
+      and score < 10`);
+  });
+
+  it("does not decode XML entities without an enabled valid MyBatis replacement", () => {
+    const mybatisSql = "select * from orders where total &gt; #{minimum} and owner = ${owner}";
+    const shellSql = "select * from orders where total &lt; ${maximum}";
+    const invalidMybatisSql = "select * from orders where total &gt; #{1minimum} and owner = ${owner}";
+    const otherSyntaxSql = "select ?, :named, @sql_server_name where total &gt; 10";
+    const plainSql = "select '&lt;plain&gt;'";
+
+    expect(substituteSqlParameters(mybatisSql, { owner: { kind: "string", value: "alice" } }, { enabledSyntaxes: ["shell"] })).toBe("select * from orders where total &gt; #{minimum} and owner = 'alice'");
+    expect(substituteSqlParameters(shellSql, { maximum: { kind: "number", value: "10" } }, { enabledSyntaxes: ["shell"] })).toBe("select * from orders where total &lt; 10");
+    expect(substituteSqlParameters(invalidMybatisSql, { owner: { kind: "string", value: "alice" } })).toBe("select * from orders where total &gt; #{1minimum} and owner = 'alice'");
+    expect(
+      substituteSqlParameters(otherSyntaxSql, {
+        "?1": { kind: "number", value: "1" },
+        named: { kind: "number", value: "2" },
+        sql_server_name: { kind: "number", value: "3" },
+      }),
+    ).toBe("select 1, 2, 3 where total &gt; 10");
+    expect(substituteSqlParameters(plainSql, {})).toBe(plainSql);
+  });
+
+  it("replaces placeholders with SQL literals", () => {
+    const sql = "select * from t where dt >= ${start_date} and amount > ${amount} and enabled = ${enabled}";
+    expect(
+      substituteSqlParameters(sql, {
+        start_date: { kind: "string", value: "2026-06-26" },
+        amount: { kind: "number", value: "100.50" },
+        enabled: { kind: "boolean", value: "true" },
+      }),
+    ).toBe("select * from t where dt >= '2026-06-26' and amount > 100.50 and enabled = TRUE");
+  });
+
+  it("preserves single-quoted string contexts for exact braced placeholders", () => {
+    const sql = "select * from t where dt = '${date}' and name = \"${name}\" and flag = '#{enabled}' and id = ${id}";
+    expect(
+      substituteSqlParameters(sql, {
+        date: { kind: "string", value: "2026-06-26" },
+        name: { kind: "string", value: "O'Reilly" },
+        enabled: { kind: "boolean", value: "true" },
+        id: { kind: "number", value: "7" },
+      }),
+    ).toBe("select * from t where dt = '2026-06-26' and name = 'O''Reilly' and flag = 'true' and id = 7");
+  });
+
+  it("keeps explicit quotes around raw and numeric parameter values", () => {
+    const sql = "select ${raw_value}, '${raw_value}', ${number_value}, '${number_value}'";
+    expect(
+      substituteSqlParameters(sql, {
+        raw_value: { kind: "raw", value: "current_date" },
+        number_value: { kind: "number", value: "42" },
+      }),
+    ).toBe("select current_date, 'current_date', 42, '42'");
+  });
+
+  it("replaces exact quoted null and empty typed values with SQL NULL", () => {
+    const sql = "select '${null_value}', '${empty_number}', '${empty_raw}', '${empty_string}'";
+    expect(
+      substituteSqlParameters(sql, {
+        null_value: { kind: "null", value: "NULL" },
+        empty_number: { kind: "number", value: "" },
+        empty_raw: { kind: "raw", value: "  " },
+        empty_string: { kind: "string", value: "" },
+      }),
+    ).toBe("select NULL, NULL, '${empty_raw}', ''");
+  });
+
+  it("replaces placeholders embedded in ordinary SQL string values", () => {
+    const sql = "select 'prefix${date}' as a, 'x#{id}y' as b, \"x#{identifier}y\" as c, ${real}";
+    expect(extractSqlParameters(sql)).toEqual(["date", "id", "real"]);
+    expect(
+      substituteSqlParameters(sql, {
+        real: { kind: "number", value: "1" },
+        date: { kind: "string", value: "O'Reilly" },
+        id: { kind: "number", value: "2" },
+        identifier: { kind: "string", value: "ignored" },
+      }),
+    ).toBe("select 'prefixO''Reilly' as a, 'x2y' as b, \"x#{identifier}y\" as c, 1");
+  });
+
+  it("supports embedded placeholders in the issue reproduction", () => {
+    const sql = "INSERT INTO ${dbSchema}.dbx_smoke (note) VALUES ('${FOO} DBX smoke 中文 🚀')";
+    expect(
+      substituteSqlParameters(sql, {
+        dbSchema: { kind: "raw", value: "public" },
+        FOO: { kind: "string", value: "O'Reilly" },
+      }),
+    ).toBe("INSERT INTO public.dbx_smoke (note) VALUES ('O''Reilly DBX smoke 中文 🚀')");
+  });
+
+  it("ignores prefixed string literals such as E/U&/B/X/N quotes", () => {
+    const sql = "select E'${path}' as a, U&'${unicode}' as b, B'${flag}' as c, X'${hex}' as d, N'${national}' as e, '${plain}' as f";
+    expect(extractSqlParameters(sql)).toEqual(["plain"]);
+    expect(
+      substituteSqlParameters(sql, {
+        path: { kind: "string", value: "C:\\new" },
+        flag: { kind: "boolean", value: "true" },
+        plain: { kind: "string", value: "ok" },
+      }),
+    ).toBe("select E'${path}' as a, U&'${unicode}' as b, B'${flag}' as c, X'${hex}' as d, N'${national}' as e, 'ok' as f");
+  });
+
+  it("ignores MySQL character-set introducers before quoted placeholders", () => {
+    const sql = "select _utf8mb4'${flag}' as a, _binary'#{amount}' as b, _custom_charset'${name}' as c, '${plain}' as d";
+    expect(extractSqlParameters(sql)).toEqual(["plain"]);
+    expect(
+      substituteSqlParameters(sql, {
+        flag: { kind: "boolean", value: "true" },
+        amount: { kind: "number", value: "12" },
+        name: { kind: "string", value: "ignored" },
+        plain: { kind: "string", value: "ok" },
+      }),
+    ).toBe("select _utf8mb4'${flag}' as a, _binary'#{amount}' as b, _custom_charset'${name}' as c, 'ok' as d");
+  });
+
+  it("handles doubled-quote continuations inside interpolated strings", () => {
+    const single = "select '${value}''suffix' as a, ${real}";
+    expect(extractSqlParameters(single)).toEqual(["value", "real"]);
+    expect(substituteSqlParameters(single, { value: { kind: "boolean", value: "true" }, real: { kind: "number", value: "1" } })).toBe("select 'true''suffix' as a, 1");
+
+    const double = 'select "${value}""suffix" as a, ${real}';
+    expect(extractSqlParameters(double)).toEqual(["real"]);
+    expect(substituteSqlParameters(double, { value: { kind: "boolean", value: "true" }, real: { kind: "number", value: "2" } })).toBe('select "${value}""suffix" as a, 2');
+  });
+
+  it("escapes string values and supports null and raw SQL", () => {
+    const sql = "select ${name}, ${empty_value}, ${expression}";
+    expect(
+      substituteSqlParameters(sql, {
+        name: { kind: "string", value: "O'Reilly" },
+        empty_value: { kind: "null", value: "" },
+        expression: { kind: "raw", value: "current_date" },
+      }),
+    ).toBe("select 'O''Reilly', NULL, current_date");
+  });
+
+  it("replaces all supported placeholder syntaxes with SQL literals", () => {
+    const sql = "select ? as a, :named as b, ${shell_name} as c, #{mybatis_name} as d, @sql_server_name as e";
+    expect(
+      substituteSqlParameters(sql, {
+        "?1": { kind: "number", value: "42" },
+        named: { kind: "string", value: "alpha" },
+        shell_name: { kind: "boolean", value: "yes" },
+        mybatis_name: { kind: "null", value: "" },
+        sql_server_name: { kind: "raw", value: "current_timestamp" },
+      }),
+    ).toBe("select 42 as a, 'alpha' as b, TRUE as c, NULL as d, current_timestamp as e");
+  });
+
+  it("replaces repeated named placeholders once and positional placeholders independently", () => {
+    const sql = "select :name, :name, ?, ?";
+    expect(
+      substituteSqlParameters(sql, {
+        name: { kind: "string", value: "same" },
+        "?1": { kind: "number", value: "1" },
+        "?2": { kind: "number", value: "2" },
+      }),
+    ).toBe("select 'same', 'same', 1, 2");
+  });
+
+  it("leaves declared SQL Server variables untouched while replacing undeclared variables", () => {
+    const sql = "DECLARE @id int = 1; SELECT * FROM users WHERE id = @id AND tenant_id = @tenant_id";
+    expect(substituteSqlParameters(sql, { tenant_id: { kind: "number", value: "7" } })).toBe("DECLARE @id int = 1; SELECT * FROM users WHERE id = @id AND tenant_id = 7");
+  });
+
+  it("leaves variables assigned by SET statements untouched while replacing undeclared variables", () => {
+    const sql = "set @date_start = '2026-07-04 00:00:00'; select * from fin_pur_payment where create_time < @date_start and tenant_id = @tenant_id";
+    expect(substituteSqlParameters(sql, { tenant_id: { kind: "number", value: "7" } })).toBe("set @date_start = '2026-07-04 00:00:00'; select * from fin_pur_payment where create_time < @date_start and tenant_id = 7");
+  });
+
+  it("preserves native variable updates instead of rewriting SQL text", () => {
+    const sql = "set @n = 1; set @n = @n + 1; select @n;";
+    expect(substituteSqlParameters(sql, {})).toBe(sql);
+  });
+
+  it("preserves MySQL dynamic SQL variables used by prepared statements", () => {
+    const sql = `SET @sql = IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE()
+     AND TABLE_NAME = 'oem_user_group'
+     AND COLUMN_NAME = 'group') = 0,
+  'ALTER TABLE \`oem_user_group\` ADD COLUMN \`group\` varchar(64) DEFAULT NULL COMMENT ''users.group'' AFTER \`oem_id\`',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;`;
+    expect(substituteSqlParameters(sql, {})).toBe(sql);
+  });
+
+  it("leaves named stored procedure arguments untouched while replacing their template values", () => {
+    const sql = "exec dbo.search_orders @date_start = '2026-07-04', @status = @status_value, @tenant_id = @tenant_id";
+    expect(
+      substituteSqlParameters(sql, {
+        status_value: { kind: "string", value: "paid" },
+        tenant_id: { kind: "number", value: "7" },
+      }),
+    ).toBe("exec dbo.search_orders @date_start = '2026-07-04', @status = 'paid', @tenant_id = 7");
+  });
+
+  it("keeps HANA SQLScript variable references while replacing template parameters", () => {
+    const sql = "DO BEGIN Dummy1 = SELECT * FROM ORDERS WHERE TENANT_ID = ${tenant_id}; SELECT * FROM :Dummy1; END";
+    expect(substituteSqlParameters(sql, { tenant_id: { kind: "number", value: "42" } }, { databaseType: "saphana" })).toBe("DO BEGIN Dummy1 = SELECT * FROM ORDERS WHERE TENANT_ID = 42; SELECT * FROM :Dummy1; END");
+  });
+});
+
+describe("enabledSyntaxes option", () => {
+  const mixedSql = "select ? as a, :named as b, ${shell_name} as c, #{mybatis_name} as d, @sql_server_name as e";
+
+  it("extracts every syntax when the option is omitted (backward compatible)", () => {
+    expect(extractSqlParameters(mixedSql)).toEqual(["?1", "named", "shell_name", "mybatis_name", "sql_server_name"]);
+  });
+
+  it("only extracts the enabled syntaxes", () => {
+    expect(extractSqlParameters(mixedSql, { enabledSyntaxes: ["named"] })).toEqual(["named"]);
+    expect(extractSqlParameters(mixedSql, { enabledSyntaxes: ["shell", "mybatis"] })).toEqual(["shell_name", "mybatis_name"]);
+  });
+
+  it("extracts nothing when no syntax is enabled", () => {
+    expect(extractSqlParameters(mixedSql, { enabledSyntaxes: [] })).toEqual([]);
+  });
+
+  it("leaves disabled-syntax tokens untouched when substituting", () => {
+    // Only :named is enabled, so every other token survives verbatim.
+    expect(substituteSqlParameters(mixedSql, { named: { kind: "number", value: "2" } }, { enabledSyntaxes: ["named"] })).toBe("select ? as a, 2 as b, ${shell_name} as c, #{mybatis_name} as d, @sql_server_name as e");
+  });
+
+  it("does not consume the positional counter for disabled positional placeholders", () => {
+    expect(substituteSqlParameters("select ?, ?", {}, { enabledSyntaxes: ["named"] })).toBe("select ?, ?");
+  });
+
+  it("keeps #{name} out of hash-comment handling when mybatis is disabled", () => {
+    expect(extractSqlParameters("select #{mybatis_name} from t", { enabledSyntaxes: ["shell"] })).toEqual([]);
+    expect(substituteSqlParameters("select #{mybatis_name} from t", {}, { enabledSyntaxes: ["shell"] })).toBe("select #{mybatis_name} from t");
+  });
+
+  it("intersects the enabled set with the saphana named-parameter rule", () => {
+    const sql = "select :named as a, ${shell_name} as b";
+    // saphana already disables :name; enabling named cannot re-enable it.
+    expect(extractSqlParameters(sql, { databaseType: "saphana", enabledSyntaxes: ["named", "shell"] })).toEqual(["shell_name"]);
+    // A non-saphana database with named disabled also drops :name.
+    expect(extractSqlParameters(sql, { enabledSyntaxes: ["shell"] })).toEqual(["shell_name"]);
+  });
+
+  it("respects enabledSyntaxes for exact quoted braced placeholders", () => {
+    const sql = "select '${shell_name}' as a, \"#{mybatis_name}\" as b";
+    expect(extractSqlParameters(sql, { enabledSyntaxes: ["shell"] })).toEqual(["shell_name"]);
+    expect(extractSqlParameters(sql, { enabledSyntaxes: ["mybatis"] })).toEqual(["mybatis_name"]);
+    expect(substituteSqlParameters(sql, { shell_name: { kind: "string", value: "x" } }, { enabledSyntaxes: ["named"] })).toBe(sql);
+  });
+
+  it("respects enabledSyntaxes for embedded quoted braced placeholders", () => {
+    const sql = "select 'x${shell_name}y' as a, 'x#{mybatis_name}y' as b";
+    expect(extractSqlParameters(sql, { enabledSyntaxes: ["shell"] })).toEqual(["shell_name"]);
+    expect(extractSqlParameters(sql, { enabledSyntaxes: ["mybatis"] })).toEqual(["mybatis_name"]);
+    expect(substituteSqlParameters(sql, { shell_name: { kind: "string", value: "a" }, mybatis_name: { kind: "string", value: "b" } }, { enabledSyntaxes: ["named"] })).toBe(sql);
+  });
+});
+
+describe("Oracle substitution variables", () => {
+  const oracleOptions = { databaseType: "oracle" as const };
+
+  it("extracts single and double ampersand substitution variables in Oracle", () => {
+    const sql = "SELECT * FROM emp WHERE deptno = &dept_id AND mgr_dept = &&dept_id";
+    expect(extractSqlParameters(sql, oracleOptions)).toEqual(["dept_id"]);
+    expect(extractSqlParameterDescriptors(sql, oracleOptions)).toEqual([{ key: "dept_id", name: "dept_id", syntax: "substitution", token: "&dept_id" }]);
+  });
+
+  it("extracts positional numeric substitution variables in Oracle", () => {
+    const sql = "SELECT * FROM emp WHERE deptno = &1 AND job_id = &&2";
+    expect(extractSqlParameters(sql, oracleOptions)).toEqual(["1", "2"]);
+    expect(extractSqlParameterDescriptors(sql, oracleOptions)).toEqual([
+      { key: "1", name: "1", syntax: "substitution", token: "&1" },
+      { key: "2", name: "2", syntax: "substitution", token: "&&2" },
+    ]);
+  });
+
+  it("handles optional dot terminator on substitution variables in Oracle", () => {
+    const sql = "SELECT * FROM &table_name. WHERE id = 1";
+    expect(extractSqlParameters(sql, oracleOptions)).toEqual(["table_name"]);
+    expect(extractSqlParameterDescriptors(sql, oracleOptions)).toEqual([{ key: "table_name", name: "table_name", syntax: "substitution", token: "&table_name." }]);
+    expect(substituteSqlParameters(sql, { table_name: { kind: "raw", value: "employees" } }, oracleOptions)).toBe("SELECT * FROM employees WHERE id = 1");
+  });
+
+  it("handles double dot for schema and table concatenation in Oracle", () => {
+    const sql = "SELECT * FROM &schema..table_name";
+    expect(extractSqlParameters(sql, oracleOptions)).toEqual(["schema"]);
+    expect(extractSqlParameterDescriptors(sql, oracleOptions)).toEqual([{ key: "schema", name: "schema", syntax: "substitution", token: "&schema." }]);
+    expect(substituteSqlParameters(sql, { schema: { kind: "raw", value: "hr" } }, oracleOptions)).toBe("SELECT * FROM hr.table_name");
+  });
+
+  it("extracts and replaces quoted substitution variables in Oracle", () => {
+    const sql = "SELECT * FROM emp WHERE ename = '&ename' AND job = '&job.' AND dept = '&&dept'";
+    expect(extractSqlParameters(sql, oracleOptions)).toEqual(["ename", "job", "dept"]);
+    expect(extractSqlParameterDescriptors(sql, oracleOptions)).toEqual([
+      { key: "ename", name: "ename", syntax: "substitution", token: "'&ename'" },
+      { key: "job", name: "job", syntax: "substitution", token: "'&job.'" },
+      { key: "dept", name: "dept", syntax: "substitution", token: "'&&dept'" },
+    ]);
+    expect(
+      substituteSqlParameters(
+        sql,
+        {
+          ename: { kind: "string", value: "O'Brien" },
+          job: { kind: "string", value: "CLERK" },
+          dept: { kind: "string", value: "SALES" },
+        },
+        oracleOptions,
+      ),
+    ).toBe("SELECT * FROM emp WHERE ename = 'O''Brien' AND job = 'CLERK' AND dept = 'SALES'");
+  });
+
+  it("does not falsely treat ordinary ampersands as substitution variables in Oracle", () => {
+    const sql = "SELECT 'Tom & Jerry' as a, 'AT&T' as b, flags & 1 as c, array1 && array2 as d, id &lt; 10 as e FROM dual";
+    expect(extractSqlParameters(sql, oracleOptions)).toEqual([]);
+  });
+
+  it("ignores substitution variables in line and block comments in Oracle", () => {
+    const sql = `
+      -- &comment_var
+      /* &block_var */
+      SELECT * FROM emp WHERE id = &real_var
+    `;
+    expect(extractSqlParameters(sql, oracleOptions)).toEqual(["real_var"]);
+  });
+
+  it("substitutes various parameter kinds for substitution variables in Oracle", () => {
+    const sql = "SELECT * FROM emp WHERE deptno = &dept AND ename = &name AND active = &active";
+    expect(
+      substituteSqlParameters(
+        sql,
+        {
+          dept: { kind: "number", value: "10" },
+          name: { kind: "string", value: "KING" },
+          active: { kind: "boolean", value: "true" },
+        },
+        oracleOptions,
+      ),
+    ).toBe("SELECT * FROM emp WHERE deptno = 10 AND ename = 'KING' AND active = TRUE");
+  });
+
+  it.each(["oracle", "oceanbase-oracle", "dameng", "yashandb", "oscar"] as const)("defaults substitution variables to enabled for %s", (databaseType) => {
+    const sql = "SELECT * FROM emp WHERE deptno = &dept_id AND code = '&code'";
+    expect(extractSqlParameters(sql, { databaseType })).toEqual(["dept_id", "code"]);
+  });
+
+  it("enables substitution variables by default for openGauss in A mode but disables in PG mode", () => {
+    const sql = "SELECT * FROM emp WHERE deptno = &dept_id";
+    expect(extractSqlParameters(sql, { databaseType: "opengauss", compatibilityMode: "A" })).toEqual(["dept_id"]);
+    expect(extractSqlParameters(sql, { databaseType: "opengauss", compatibilityMode: "PG" })).toEqual([]);
+  });
+
+  it("enables substitution variables by default for Kingbase in oracle mode but disables in pg mode", () => {
+    const sql = "SELECT * FROM emp WHERE deptno = &dept_id";
+    expect(extractSqlParameters(sql, { databaseType: "kingbase", compatibilityMode: "oracle" })).toEqual(["dept_id"]);
+    expect(extractSqlParameters(sql, { databaseType: "kingbase", compatibilityMode: "pg" })).toEqual([]);
+  });
+
+  it("disables substitution variables by default when databaseType is undefined or non-Oracle", () => {
+    const sql = "SELECT * FROM emp WHERE deptno = &dept_id";
+    expect(extractSqlParameters(sql)).toEqual([]);
+    expect(extractSqlParameters(sql, { databaseType: "mysql" })).toEqual([]);
+  });
+
+  it("does not treat PostgreSQL bitwise & or array overlap && as substitution variables", () => {
+    expect(extractSqlParameters("SELECT flags &mask FROM t", { databaseType: "postgres" })).toEqual([]);
+    expect(extractSqlParameters("SELECT flags & 1 FROM t", { databaseType: "postgres" })).toEqual([]);
+    expect(extractSqlParameters("SELECT a &&b FROM t", { databaseType: "postgres" })).toEqual([]);
+    expect(extractSqlParameters("SELECT array1 && array2 FROM t", { databaseType: "postgres" })).toEqual([]);
+  });
+
+  it("does not treat SQL Server bitwise & as substitution variables", () => {
+    expect(extractSqlParameters("SELECT flags &mask FROM t", { databaseType: "sqlserver" })).toEqual([]);
+    expect(extractSqlParameters("SELECT flags & 1 FROM t", { databaseType: "sqlserver" })).toEqual([]);
+  });
+
+  it("respects enabledSyntaxes toggle for substitution syntax across database types", () => {
+    const sql = "SELECT * FROM emp WHERE deptno = &dept AND id = :id";
+    // Oracle with substitution explicitly excluded
+    expect(extractSqlParameters(sql, { databaseType: "oracle", enabledSyntaxes: ["named"] })).toEqual(["id"]);
+    // PostgreSQL with substitution explicitly included
+    expect(extractSqlParameters(sql, { databaseType: "postgres", enabledSyntaxes: ["substitution"] })).toEqual(["dept"]);
+    expect(extractSqlParameters("SELECT flags &mask FROM t", { databaseType: "postgres", enabledSyntaxes: ["substitution"] })).toEqual(["mask"]);
+    expect(extractSqlParameters("SELECT a &&b FROM t", { databaseType: "postgres", enabledSyntaxes: ["substitution"] })).toEqual(["b"]);
+    // Substitution execution
+    expect(substituteSqlParameters("SELECT * FROM emp WHERE deptno = &dept", { dept: { kind: "number", value: "10" } }, { databaseType: "oracle", enabledSyntaxes: ["named"] })).toBe("SELECT * FROM emp WHERE deptno = &dept");
+    expect(substituteSqlParameters("SELECT * FROM emp WHERE deptno = &dept", { dept: { kind: "number", value: "10" } }, { databaseType: "postgres", enabledSyntaxes: ["substitution"] })).toBe("SELECT * FROM emp WHERE deptno = 10");
+  });
+});
+
+describe("sqlParameterLiteral", () => {
+  it("falls back to quoted strings for invalid boolean input", () => {
+    expect(sqlParameterLiteral({ kind: "boolean", value: "maybe" })).toBe("'maybe'");
+  });
+});

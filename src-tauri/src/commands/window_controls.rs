@@ -1,0 +1,227 @@
+#[cfg(target_os = "macos")]
+async fn set_macos_traffic_light_position_inner(
+    window: tauri::Window,
+    target_x: f64,
+    target_center_y: f64,
+    ui_scale: f64,
+) -> Result<MacosTrafficLightLayout, String> {
+    let ns_window = window.ns_window().map_err(|err| err.to_string())? as usize;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    window
+        .run_on_main_thread(move || unsafe {
+            use objc2_app_kit::{NSWindow, NSWindowButton};
+
+            let ns_window = &*(ns_window as *mut NSWindow);
+            let Some(close) = ns_window.standardWindowButton(NSWindowButton::CloseButton) else {
+                let _ = tx.send(None);
+                return;
+            };
+            let Some(miniaturize) = ns_window.standardWindowButton(NSWindowButton::MiniaturizeButton) else {
+                let _ = tx.send(None);
+                return;
+            };
+            let zoom = ns_window.standardWindowButton(NSWindowButton::ZoomButton);
+
+            let Some(title_bar_container_view) = close.superview().and_then(|view| view.superview()) else {
+                let _ = tx.send(None);
+                return;
+            };
+
+            let close_rect = close.frame();
+            let window_height = ns_window.frame().size.height;
+            let target_window_center_y = target_center_y * ui_scale;
+            let target_y = (target_window_center_y - close_rect.size.height / 2.0).max(0.0);
+            let title_bar_frame_height = close_rect.size.height + target_y;
+            let mut title_bar_rect = title_bar_container_view.frame();
+            title_bar_rect.size.height = title_bar_frame_height;
+            title_bar_rect.origin.y = window_height - title_bar_frame_height;
+            title_bar_container_view.setFrame(title_bar_rect);
+
+            let close_rect = close.frame();
+            let current_window_rect =
+                close.superview().map(|view| view.convertRect_toView(close_rect, None)).unwrap_or(close_rect);
+            let current_center_y =
+                window_height - (current_window_rect.origin.y + current_window_rect.size.height / 2.0);
+            let center_delta_y = target_window_center_y - current_center_y;
+            let space_between = miniaturize.frame().origin.x - close_rect.origin.x;
+            let mut buttons = vec![close, miniaturize];
+            if let Some(zoom) = zoom {
+                buttons.push(zoom);
+            }
+            for (index, button) in buttons.into_iter().enumerate() {
+                let mut rect = button.frame();
+                rect.origin.x = target_x + (index as f64 * space_between);
+                rect.origin.y -= center_delta_y;
+                button.setFrameOrigin(rect.origin);
+            }
+
+            // AppKit re-runs the title bar layout during a live window resize and resets
+            // the standard buttons to their default frames. The vendored wry re-applies
+            // the traffic light inset from `drawRect:` (after that layout pass), which is
+            // what the user actually sees. Hand it the position computed above so both
+            // writers agree; otherwise the buttons flicker between the toolbar alignment
+            // and wry's window creation inset while the window is being resized.
+            apply_traffic_light_inset_to_wry(ns_window, target_x, target_y);
+
+            let Some(close) = ns_window.standardWindowButton(NSWindowButton::CloseButton) else {
+                let _ = tx.send(None);
+                return;
+            };
+            let zoom = ns_window.standardWindowButton(NSWindowButton::ZoomButton);
+            let close_rect = close.frame();
+            let close_window_rect =
+                close.superview().map(|view| view.convertRect_toView(close_rect, None)).unwrap_or(close_rect);
+            let reserved_button_rect = zoom
+                .as_ref()
+                .and_then(|button| button.superview().map(|view| view.convertRect_toView(button.frame(), None)))
+                .unwrap_or(close_window_rect);
+            let button_center_y = window_height - (close_window_rect.origin.y + close_window_rect.size.height / 2.0);
+            let _ = tx.send(Some(MacosTrafficLightLayout {
+                x: close_window_rect.origin.x,
+                y: target_y,
+                center_y: button_center_y,
+                previous_center_y: current_center_y,
+                reserved_inset: reserved_button_rect.origin.x + reserved_button_rect.size.width + 8.0,
+            }));
+        })
+        .map_err(|err| err.to_string())?;
+    rx.await.map_err(|err| err.to_string())?.ok_or_else(|| "Unable to locate macOS traffic light buttons".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn set_macos_traffic_light_position_inner(
+    _window: tauri::Window,
+    x: f64,
+    target_center_y: f64,
+    ui_scale: f64,
+) -> Result<MacosTrafficLightLayout, String> {
+    let center_y = target_center_y * ui_scale;
+    Ok(MacosTrafficLightLayout { x, y: center_y, center_y, previous_center_y: center_y, reserved_inset: 0.0 })
+}
+
+fn validate_macos_traffic_light_position(x: f64, y: f64, scale: f64) -> Result<(), String> {
+    if !x.is_finite() || !y.is_finite() || !scale.is_finite() || scale <= 0.0 {
+        return Err("Invalid traffic light position".to_string());
+    }
+    Ok(())
+}
+
+/// Hands the traffic light inset DBX computed to the vendored wry parent view.
+///
+/// wry re-applies the stored inset from `drawRect:` and that write is the one that
+/// survives AppKit's title bar layout, so keeping it in sync with DBX's toolbar
+/// alignment removes the flicker between the two during a window resize.
+#[cfg(target_os = "macos")]
+fn apply_traffic_light_inset_to_wry(ns_window: &objc2_app_kit::NSWindow, x: f64, y: f64) {
+    use objc2::runtime::Sel;
+    use objc2_app_kit::NSView;
+
+    let selector: Sel = objc2::sel!(dbxUpdateTrafficLightInsetX:y:);
+
+    fn visit(view: &NSView, selector: Sel, x: f64, y: f64) -> bool {
+        let responds: bool = unsafe { objc2::msg_send![view, respondsToSelector: selector] };
+        if responds {
+            let _: () = unsafe { objc2::msg_send![view, dbxUpdateTrafficLightInsetX: x, y: y] };
+            return true;
+        }
+        view.subviews().iter().any(|subview| visit(&subview, selector, x, y))
+    }
+
+    if let Some(content_view) = ns_window.contentView() {
+        let _ = visit(&content_view, selector, x, y);
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MacosTrafficLightLayout {
+    x: f64,
+    y: f64,
+    center_y: f64,
+    previous_center_y: f64,
+    reserved_inset: f64,
+}
+
+#[tauri::command]
+pub async fn set_macos_traffic_light_position(
+    window: tauri::Window,
+    x: f64,
+    y: f64,
+    scale: f64,
+) -> Result<MacosTrafficLightLayout, String> {
+    validate_macos_traffic_light_position(x, y, scale)?;
+    // Await AppKit work asynchronously so the main thread can execute the scheduled closure.
+    set_macos_traffic_light_position_inner(window, x, y, scale).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_macos_traffic_light_position;
+    use serde_json::Value;
+
+    #[test]
+    fn validates_macos_traffic_light_position_inputs() {
+        assert!(validate_macos_traffic_light_position(16.0, 18.0, 1.0).is_ok());
+        assert!(validate_macos_traffic_light_position(f64::NAN, 18.0, 1.0).is_err());
+        assert!(validate_macos_traffic_light_position(16.0, f64::INFINITY, 1.0).is_err());
+        assert!(validate_macos_traffic_light_position(16.0, 18.0, 0.0).is_err());
+    }
+
+    // platform config arrays replace the base array wholesale, so the Linux window object
+    // is a copy of the base one; keep them from drifting apart.
+    #[test]
+    fn linux_main_window_config_mirrors_the_base_window() {
+        let base: Value = serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+        let linux: Value = serde_json::from_str(include_str!("../../tauri.linux.conf.json")).unwrap();
+        let mut base_window = base["app"]["windows"][0].clone();
+        let mut linux_window = linux["app"]["windows"][0].clone();
+
+        // macOS-only keys in the base, and the Linux-only overrides.
+        for key in ["titleBarStyle", "trafficLightPosition"] {
+            base_window.as_object_mut().unwrap().remove(key);
+        }
+        assert_eq!(linux_window["create"], Value::Bool(false));
+        assert_eq!(linux_window["transparent"], Value::Bool(false));
+        for key in ["create", "transparent"] {
+            linux_window.as_object_mut().unwrap().remove(key);
+        }
+        assert_eq!(linux_window, base_window);
+    }
+}
+
+#[derive(serde::Serialize)]
+pub struct LinuxWindowControlIcons {
+    minimize: String,
+    maximize: String,
+    restore: String,
+    close: String,
+}
+
+/// Reads the window-control glyphs from the active GTK icon theme (Adwaita, Yaru, ...)
+/// so the custom Linux controls look like the system's. Returns `None` when any glyph
+/// is missing, in which case the frontend falls back to its bundled icons.
+/// Sync command: GTK must be used from the main thread.
+#[tauri::command]
+pub fn get_linux_window_control_icons() -> Option<LinuxWindowControlIcons> {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::*;
+
+        let theme = gtk::IconTheme::default()?;
+        let load = |name: &str| -> Option<String> {
+            let info = theme.lookup_icon(name, 16, gtk::IconLookupFlags::FORCE_SVG)?;
+            let svg = std::fs::read_to_string(info.filename()?).ok()?;
+            // Anything beyond a small glyph is not a window-control icon.
+            (svg.len() < 16 * 1024 && svg.contains("<svg")).then_some(svg)
+        };
+        Some(LinuxWindowControlIcons {
+            minimize: load("window-minimize-symbolic")?,
+            maximize: load("window-maximize-symbolic")?,
+            restore: load("window-restore-symbolic")?,
+            close: load("window-close-symbolic")?,
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}

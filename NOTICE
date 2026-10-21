@@ -1,0 +1,11 @@
+Quill
+Copyright 2026 Abhay Pratap Singh
+
+This product is a derivative work of DBX (https://github.com/t8y2/dbx),
+licensed under the Apache License, Version 2.0. The original DBX license is
+retained in LICENSE, and the original upstream README is kept at
+docs/README.dbx-upstream.md.
+
+Quill's natural-language-to-SQL features adapt algorithms and prompt designs
+from DB-GPT (https://github.com/eosphoros-ai/DB-GPT), Copyright (c) 2023
+magic.chen, licensed under the MIT License. See third_party/DB-GPT/LICENSE.

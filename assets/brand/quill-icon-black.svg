@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <filter id="glow" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <feGaussianBlur stdDeviation="12" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <mask id="cut">
+      <rect x="0" y="0" width="1024" height="1024" fill="#fff"/>
+      <path d="M320 372 A192 60 0 0 0 704 372" fill="none" stroke="#000" stroke-width="12"/>
+      <path d="M320 444 A192 60 0 0 0 704 444" fill="none" stroke="#000" stroke-width="12"/>
+    </mask>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="#0A0A0A"/>
+  <rect x="101" y="101" width="822" height="822" rx="185" fill="none" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="2"/>
+  <path mask="url(#cut)" fill="#F5F5F5" d="M332 300 L332 470 C340 600 470 700 512 820 C554 700 684 600 692 470 L692 300 A180 56 0 0 0 332 300 Z"/>
+  <ellipse cx="512" cy="300" rx="180" ry="56" fill="#FFFFFF"/>
+  <path d="M332 300 A180 56 0 0 0 692 300" fill="none" stroke="#0A0A0A" stroke-opacity="0.25" stroke-width="6"/>
+  <g filter="url(#glow)">
+    <rect x="503" y="596" width="18" height="200" rx="9" fill="#F59E0B"/>
+    <circle cx="512" cy="560" r="28" fill="#FBBF24"/>
+  </g>
+  <path filter="url(#glow)" fill="#FBBF24" d="M760 196 C766 236 780 250 820 256 C780 262 766 276 760 316 C754 276 740 262 700 256 C740 250 754 236 760 196 Z"/>
+</svg>

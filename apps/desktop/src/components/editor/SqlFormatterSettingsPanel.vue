@@ -1,0 +1,960 @@
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { Upload, Download, RotateCcw, WandSparkles, Save, Copy } from "@lucide/vue";
+import { useI18n } from "vue-i18n";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useToast } from "@/composables/useToast";
+import { copyToClipboard } from "@/lib/common/clipboard";
+import { saveTextFile } from "@/lib/export/saveTextFile";
+import { searchKeymapWithoutModD } from "@/lib/editor/codemirrorSearchKeymap";
+import { formatSqlText, type SqlFormatDialect } from "@/lib/sql/sqlFormatter";
+import {
+  DEFAULT_SQL_FORMATTER_SETTINGS,
+  SQL_FORMATTER_CONFIG_FORMATTER,
+  SQL_FORMATTER_CONFIG_VERSION,
+  normalizeSqlFormatterSettings,
+  parseSqlFormatterConfig,
+  serializeSqlFormatterConfig,
+  syncSqlFormatterConfigDraft,
+  type SqlFormatterCase,
+  type SqlFormatterCommaPosition,
+  type SqlFormatterExpressionWidth,
+  type SqlFormatterFromClauseLayout,
+  type SqlFormatterIndentStyle,
+  type SqlFormatterLayoutStyle,
+  type SqlFormatterLinesBetweenQueries,
+  type SqlFormatterLogicalOperatorNewline,
+  type SqlFormatterOptionSettings,
+  type SqlFormatterParamTypes,
+  type SqlFormatterSettings,
+  type SqlFormatterTabWidth,
+} from "@/lib/sql/sqlFormatterConfig";
+
+type EditorViewInstance = import("@codemirror/view").EditorView;
+type CodeMirrorModules = {
+  view: typeof import("@codemirror/view");
+  state: typeof import("@codemirror/state");
+  langJson: typeof import("@codemirror/lang-json");
+  commands: typeof import("@codemirror/commands");
+  search: typeof import("@codemirror/search");
+};
+
+const props = defineProps<{
+  modelValue: SqlFormatterSettings;
+}>();
+
+const emit = defineEmits<{
+  "update:modelValue": [value: SqlFormatterSettings];
+  validityChange: [value: boolean];
+}>();
+
+const { t } = useI18n();
+const { toast } = useToast();
+
+const activeMode = defineModel<"form" | "json">("mode", { default: "form" });
+const fileInputRef = ref<HTMLInputElement>();
+const jsonEditorRef = ref<HTMLDivElement>();
+const jsonDraft = ref(serializeSqlFormatterConfig(props.modelValue));
+const jsonValidationMessage = ref("");
+const importError = ref("");
+const advancedConfigError = ref("");
+const jsonEditorLoading = ref(false);
+const jsonEditorReady = ref(false);
+const jsonEditorLoadError = ref("");
+const paramTypesDraft = ref("");
+const focusedAdvancedOption = ref<"paramTypes" | null>(null);
+const previewSql = ref("SELECT id, name, created_at FROM users WHERE active = 1 AND role = 'admin';\n\nINSERT INTO users (id, name) VALUES (1, 'Ada');\n\nUPDATE users SET name = 'Ada', active = 1 WHERE id = 1;");
+const previewDialect = ref<SqlFormatDialect>("oracle");
+const previewResult = ref("");
+const previewError = ref("");
+const previewDiagnostic = ref(false);
+const previewStale = ref(false);
+const previewLoading = ref(false);
+let previewRequestId = 0;
+let previewTimer: ReturnType<typeof setTimeout> | undefined;
+
+let cmView: EditorViewInstance | null = null;
+let cmModules: CodeMirrorModules | null = null;
+let lastValidity: boolean | null = null;
+
+const settings = computed(() => normalizeSqlFormatterSettings(props.modelValue));
+
+const caseOptions: { value: SqlFormatterCase; labelKey: string }[] = [
+  { value: "upper", labelKey: "settings.sqlFormatterCaseUpper" },
+  { value: "lower", labelKey: "settings.sqlFormatterCaseLower" },
+  { value: "preserve", labelKey: "settings.sqlFormatterCasePreserve" },
+];
+
+const logicalOperatorOptions: { value: SqlFormatterLogicalOperatorNewline; labelKey: string }[] = [
+  { value: "before", labelKey: "settings.sqlFormatterLogicalBefore" },
+  { value: "after", labelKey: "settings.sqlFormatterLogicalAfter" },
+  { value: "none", labelKey: "settings.sqlFormatterLogicalSameLine" },
+];
+
+const commaPositionOptions: { value: SqlFormatterCommaPosition; labelKey: string }[] = [
+  { value: "after", labelKey: "settings.sqlFormatterCommaPositionAfter" },
+  { value: "before", labelKey: "settings.sqlFormatterCommaPositionBefore" },
+];
+const dmlCommaPositionOptions = [{ value: "inherit", labelKey: "settings.sqlFormatterRule_inherit" }, ...commaPositionOptions];
+
+const fromClauseLayoutOptions: { value: SqlFormatterFromClauseLayout; labelKey: string }[] = [
+  { value: "newLine", labelKey: "settings.sqlFormatterFromNewLine" },
+  { value: "sameLine", labelKey: "settings.sqlFormatterFromSameLine" },
+];
+
+const indentStyleOptions: { value: SqlFormatterIndentStyle; labelKey: string }[] = [
+  { value: "standard", labelKey: "settings.sqlFormatterIndentStyleStandard" },
+  { value: "tabularLeft", labelKey: "settings.sqlFormatterIndentStyleTabularLeft" },
+  { value: "tabularRight", labelKey: "settings.sqlFormatterIndentStyleTabularRight" },
+];
+
+const layoutStyleOptions: { value: SqlFormatterLayoutStyle; labelKey: string }[] = [
+  { value: "classic", labelKey: "settings.sqlFormatterLayoutStyleClassic" },
+  { value: "dbx", labelKey: "settings.sqlFormatterLayoutStyleDbx" },
+];
+
+const tabWidthOptions: SqlFormatterTabWidth[] = [2, 4];
+const linesBetweenQueriesOptions: SqlFormatterLinesBetweenQueries[] = [0, 1, 2];
+const sqlFormatterOptionLabelKeys: Record<keyof SqlFormatterOptionSettings, string> = {
+  layoutStyle: "settings.sqlFormatterLayoutStyle",
+  keywordCase: "settings.sqlFormatterKeywordCase",
+  dataTypeCase: "settings.sqlFormatterDataTypeCase",
+  functionCase: "settings.sqlFormatterFunctionCase",
+  identifierCase: "settings.sqlFormatterIdentifierCase",
+  indentStyle: "settings.sqlFormatterIndentStyle",
+  useTabs: "settings.sqlFormatterIndent",
+  tabWidth: "settings.sqlFormatterTabWidth",
+  logicalOperatorNewline: "settings.sqlFormatterLogicalOperatorNewline",
+  commaPosition: "settings.sqlFormatterCommaPosition",
+  fromClauseLayout: "settings.sqlFormatterFromClauseLayout",
+  expressionWidth: "settings.sqlFormatterExpressionWidth",
+  linesBetweenQueries: "settings.sqlFormatterLinesBetweenQueries",
+  preserveEmptyLines: "settings.sqlFormatterPreserveEmptyLines",
+  denseOperators: "settings.sqlFormatterDenseOperators",
+  newlineBeforeSemicolon: "settings.sqlFormatterNewlineBeforeSemicolon",
+  paramTypes: "settings.sqlFormatterParamTypes",
+  customRulesEnabled: "settings.sqlFormatterCustomRules",
+  listLayout: "settings.sqlFormatterListLayout",
+  selectListLayout: "settings.sqlFormatterSelectListLayout",
+  insertListLayout: "settings.sqlFormatterInsertListLayout",
+  updateListLayout: "settings.sqlFormatterUpdateListLayout",
+  listItemAlignment: "settings.sqlFormatterListItemAlignment",
+  alignSelectAliases: "settings.sqlFormatterAlignSelectAliases",
+  alignUpdateAssignments: "settings.sqlFormatterAlignUpdateAssignments",
+  selectCommaPosition: "settings.sqlFormatterSelectCommaPosition",
+  insertCommaPosition: "settings.sqlFormatterInsertCommaPosition",
+  updateCommaPosition: "settings.sqlFormatterUpdateCommaPosition",
+  whereLogicalOperatorNewline: "settings.sqlFormatterWhereLogicalOperatorNewline",
+  onLogicalOperatorNewline: "settings.sqlFormatterOnLogicalOperatorNewline",
+  expressionLogicalOperatorNewline: "settings.sqlFormatterExpressionLogicalOperatorNewline",
+  newlineBeforeJoinOn: "settings.sqlFormatterNewlineBeforeJoinOn",
+  collapseShortStatements: "settings.sqlFormatterCollapseShortStatements",
+  emptyLineMode: "settings.sqlFormatterEmptyLineMode",
+};
+const sqlFormatterConfigErrorKeys: Record<string, string> = {
+  "Invalid JSON.": "settings.sqlFormatterConfigErrorInvalidJson",
+  "Config must be a JSON object.": "settings.sqlFormatterConfigErrorObject",
+  "Unsupported config version.": "settings.sqlFormatterConfigErrorVersion",
+  "Unsupported formatter.": "settings.sqlFormatterConfigErrorFormatter",
+  "Unsupported formatter option: params.": "settings.sqlFormatterConfigErrorUnsupportedParams",
+  "Config options must be a JSON object.": "settings.sqlFormatterConfigErrorOptionsObject",
+};
+
+function emitValidity(value: boolean) {
+  if (lastValidity === value) return;
+  lastValidity = value;
+  emit("validityChange", value);
+}
+
+function setJsonDraftText(text: string) {
+  jsonDraft.value = text;
+  if (!cmView || cmView.state.doc.toString() === text) return;
+  cmView.dispatch({
+    changes: { from: 0, to: cmView.state.doc.length, insert: text },
+  });
+}
+
+function localizeSqlFormatterConfigError(message: string): string {
+  const exactKey = sqlFormatterConfigErrorKeys[message];
+  if (exactKey) return t(exactKey);
+
+  const unknownOption = message.match(/^Unknown formatter option: (.+)\.$/);
+  if (unknownOption?.[1]) {
+    return t("settings.sqlFormatterConfigErrorUnknownOption", { option: unknownOption[1] });
+  }
+
+  const invalidOption = message.match(/^Invalid formatter option value: (.+)\.$/);
+  if (invalidOption?.[1]) {
+    const labelKey = sqlFormatterOptionLabelKeys[invalidOption[1] as keyof SqlFormatterOptionSettings];
+    if (labelKey) {
+      return t("settings.sqlFormatterConfigErrorInvalidOptionValue", { option: t(labelKey) });
+    }
+  }
+
+  return t("settings.sqlFormatterConfigErrorInvalidConfig");
+}
+
+function validateJsonDraft(text = jsonDraft.value): boolean {
+  const result = parseSqlFormatterConfig(text);
+  jsonValidationMessage.value = result.ok ? "" : localizeSqlFormatterConfigError(result.message);
+  const valid = result.ok;
+  emitValidity(activeMode.value === "json" ? valid : true);
+  return valid;
+}
+
+function syncJsonDraft(text = jsonDraft.value): boolean {
+  const result = syncSqlFormatterConfigDraft(text, updateSettings);
+  jsonValidationMessage.value = result.ok ? "" : localizeSqlFormatterConfigError(result.message);
+  emitValidity(activeMode.value === "json" ? result.ok : true);
+  return result.ok;
+}
+
+function updateSettings(next: unknown) {
+  importError.value = "";
+  advancedConfigError.value = "";
+  emit("update:modelValue", normalizeSqlFormatterSettings(next));
+}
+
+function updateOption<K extends keyof SqlFormatterSettings>(key: K, value: SqlFormatterSettings[K]) {
+  updateSettings({ ...settings.value, [key]: value });
+}
+
+function onCaseOption(key: "keywordCase" | "functionCase" | "dataTypeCase", value: any) {
+  if (value === "upper" || value === "lower" || value === "preserve") updateOption(key, value);
+}
+
+function onIdentifierCase(value: any) {
+  if (value === "upper" || value === "lower" || value === "preserve") updateOption("identifierCase", value);
+}
+
+function onIndentStyle(value: any) {
+  if (value === "standard" || value === "tabularLeft" || value === "tabularRight") updateOption("indentStyle", value);
+}
+
+function onLayoutStyle(value: any) {
+  if (value === "dbx" || value === "classic") updateOption("layoutStyle", value);
+}
+
+function onLogicalOperatorNewline(value: any) {
+  if (value === "before" || value === "after" || value === "none") updateOption("logicalOperatorNewline", value);
+}
+
+function onFromClauseLayout(value: any) {
+  if (value === "newLine" || value === "sameLine") updateOption("fromClauseLayout", value);
+}
+
+function onCommaPosition(value: any) {
+  if (value === "after" || value === "before") updateOption("commaPosition", value);
+}
+
+function onTabWidth(value: any) {
+  const next = Number(value);
+  if (next === 2 || next === 4) updateOption("tabWidth", next);
+}
+
+function onExpressionWidth(value: any) {
+  const next = Number(value);
+  if (Number.isInteger(next) && next >= 20 && next <= 500) updateOption("expressionWidth", next as SqlFormatterExpressionWidth);
+}
+
+const ruleEnums = {
+  layout: ["singleLine", "fit", "vertical", "wrap"],
+  layoutOverride: ["inherit", "singleLine", "fit", "vertical", "wrap"],
+  alignment: ["firstItem", "indent"],
+  logical: ["inherit", "before", "after", "none"],
+  empty: ["inherit", "remove", "single", "preserve"],
+} as const;
+const dmlCommaRules: { key: "selectCommaPosition" | "insertCommaPosition" | "updateCommaPosition"; titleKey: string }[] = [
+  { key: "selectCommaPosition", titleKey: "sqlFormatterSelectCommaPosition" },
+  { key: "insertCommaPosition", titleKey: "sqlFormatterInsertCommaPosition" },
+  { key: "updateCommaPosition", titleKey: "sqlFormatterUpdateCommaPosition" },
+];
+const dmlToggleRules: { key: "alignSelectAliases" | "alignUpdateAssignments" | "collapseShortStatements"; titleKey: string }[] = [
+  { key: "alignSelectAliases", titleKey: "sqlFormatterAlignSelectAliases" },
+  { key: "alignUpdateAssignments", titleKey: "sqlFormatterAlignUpdateAssignments" },
+  { key: "collapseShortStatements", titleKey: "sqlFormatterCollapseShortStatements" },
+];
+const conditionRules: { key: "whereLogicalOperatorNewline" | "onLogicalOperatorNewline" | "expressionLogicalOperatorNewline"; titleKey: string }[] = [
+  { key: "whereLogicalOperatorNewline", titleKey: "sqlFormatterWhereLogicalOperatorNewline" },
+  { key: "onLogicalOperatorNewline", titleKey: "sqlFormatterOnLogicalOperatorNewline" },
+  { key: "expressionLogicalOperatorNewline", titleKey: "sqlFormatterExpressionLogicalOperatorNewline" },
+];
+function schedulePreview() {
+  previewStale.value = !!previewResult.value;
+  if (previewTimer) clearTimeout(previewTimer);
+  const requestId = ++previewRequestId;
+  previewTimer = setTimeout(async () => {
+    previewLoading.value = true;
+    previewError.value = "";
+    let diagnostic: "custom-rules-fallback" | undefined;
+    try {
+      const result = await formatSqlText(previewSql.value, previewDialect.value, settings.value, (value) => (diagnostic = value));
+      if (requestId !== previewRequestId) return;
+      previewResult.value = result;
+      previewDiagnostic.value = diagnostic === "custom-rules-fallback";
+      previewStale.value = false;
+    } catch (error) {
+      if (requestId !== previewRequestId) return;
+      previewError.value = error instanceof Error ? error.message : String(error);
+      previewStale.value = !!previewResult.value;
+    } finally {
+      if (requestId === previewRequestId) previewLoading.value = false;
+    }
+  }, 180);
+}
+watch([settings, previewSql, previewDialect], schedulePreview, { deep: true, immediate: true });
+
+function onLinesBetweenQueries(value: any) {
+  const next = Number(value);
+  if (next === 0 || next === 1 || next === 2) updateOption("linesBetweenQueries", next);
+}
+
+function restoreDefaults() {
+  updateSettings(DEFAULT_SQL_FORMATTER_SETTINGS);
+}
+
+function stringifyAdvancedOption(value: SqlFormatterParamTypes | null): string {
+  return JSON.stringify(value, null, 2);
+}
+
+function setAdvancedDraft(value: SqlFormatterParamTypes | null) {
+  paramTypesDraft.value = stringifyAdvancedOption(value);
+}
+
+function onAdvancedJsonInput(event: Event) {
+  paramTypesDraft.value = (event.target as HTMLTextAreaElement).value;
+}
+
+function onJsonDraftTextareaInput(event: Event) {
+  const text = (event.target as HTMLTextAreaElement).value;
+  jsonDraft.value = text;
+  syncJsonDraft(text);
+}
+
+function onAdvancedJsonFocus() {
+  focusedAdvancedOption.value = "paramTypes";
+}
+
+function onAdvancedJsonBlur() {
+  focusedAdvancedOption.value = null;
+  applyAdvancedJsonOption();
+}
+
+function applyAdvancedJsonOption() {
+  let parsed: unknown = null;
+  const draft = paramTypesDraft.value.trim();
+  if (draft) {
+    try {
+      parsed = JSON.parse(draft);
+    } catch {
+      advancedConfigError.value = localizeSqlFormatterConfigError("Invalid JSON.");
+      return;
+    }
+  }
+
+  const result = parseSqlFormatterConfig(
+    JSON.stringify({
+      version: SQL_FORMATTER_CONFIG_VERSION,
+      formatter: SQL_FORMATTER_CONFIG_FORMATTER,
+      options: { paramTypes: parsed },
+    }),
+  );
+  if (!result.ok) {
+    advancedConfigError.value = localizeSqlFormatterConfigError(result.message);
+    return;
+  }
+
+  updateOption("paramTypes", result.settings.paramTypes);
+  setAdvancedDraft(result.settings.paramTypes);
+  advancedConfigError.value = "";
+}
+
+function importConfig() {
+  importError.value = "";
+  fileInputRef.value?.click();
+}
+
+async function onImportFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file) return;
+
+  try {
+    const text = await file.text();
+    const result = parseSqlFormatterConfig(text);
+    if (!result.ok) {
+      importError.value = localizeSqlFormatterConfigError(result.message);
+      return;
+    }
+    updateSettings(result.settings);
+    toast(t("settings.sqlFormatterImportSuccess"));
+  } catch (e: any) {
+    importError.value = e?.message || String(e);
+  }
+}
+
+async function exportConfig() {
+  await saveTextFile(serializeSqlFormatterConfig(settings.value), "dbx-sql-formatter.json", "JSON", "json");
+}
+
+async function copyJsonDraft() {
+  try {
+    await copyToClipboard(cmView?.state.doc.toString() ?? jsonDraft.value);
+    toast(t("settings.sqlFormatterCopyJsonSuccess"));
+  } catch (e: any) {
+    toast(t("settings.sqlFormatterCopyJsonFailed", { message: e?.message || String(e) }), 3000);
+  }
+}
+
+function applyJsonDraft(): boolean {
+  const result = parseSqlFormatterConfig(jsonDraft.value);
+  if (!result.ok) {
+    jsonValidationMessage.value = localizeSqlFormatterConfigError(result.message);
+    emitValidity(false);
+    return true;
+  }
+
+  const pretty = serializeSqlFormatterConfig(result.settings);
+  updateSettings(result.settings);
+  setJsonDraftText(pretty);
+  jsonValidationMessage.value = "";
+  emitValidity(true);
+  return true;
+}
+
+function formatJsonDraft(): boolean {
+  const result = parseSqlFormatterConfig(jsonDraft.value);
+  if (!result.ok) {
+    jsonValidationMessage.value = localizeSqlFormatterConfigError(result.message);
+    emitValidity(false);
+    return true;
+  }
+
+  setJsonDraftText(serializeSqlFormatterConfig(result.settings));
+  jsonValidationMessage.value = "";
+  emitValidity(true);
+  return true;
+}
+
+async function loadCodeMirrorModules(): Promise<CodeMirrorModules> {
+  if (cmModules) return cmModules;
+  const [view, state, langJson, commands, search] = await Promise.all([import("@codemirror/view"), import("@codemirror/state"), import("@codemirror/lang-json"), import("@codemirror/commands"), import("@codemirror/search")]);
+  cmModules = { view, state, langJson, commands, search };
+  return cmModules;
+}
+
+function destroyJsonEditor() {
+  cmView?.destroy();
+  cmView = null;
+  jsonEditorReady.value = false;
+  jsonEditorLoadError.value = "";
+}
+
+function jsonEditorKeymapExtension(modules: CodeMirrorModules) {
+  const { keymap } = modules.view;
+  const commands = modules.commands;
+  const search = modules.search;
+  return keymap.of([...searchKeymapWithoutModD(search.searchKeymap), ...commands.historyKeymap, ...commands.defaultKeymap]);
+}
+
+async function initJsonEditor() {
+  if (cmView || !jsonEditorRef.value) return;
+  jsonEditorLoading.value = true;
+  jsonEditorLoadError.value = "";
+  try {
+    const modules = await loadCodeMirrorModules();
+    if (activeMode.value !== "json" || cmView || !jsonEditorRef.value) return;
+
+    const { EditorView, lineNumbers, highlightActiveLine, highlightActiveLineGutter } = modules.view;
+    const { EditorState } = modules.state;
+    const { json } = modules.langJson;
+    const commands = modules.commands;
+    const search = modules.search;
+
+    const state = EditorState.create({
+      doc: jsonDraft.value,
+      extensions: [
+        lineNumbers(),
+        highlightActiveLineGutter(),
+        highlightActiveLine(),
+        commands.history(),
+        search.search({ top: true }),
+        json(),
+        jsonEditorKeymapExtension(modules),
+        EditorView.lineWrapping,
+        EditorView.updateListener.of((update) => {
+          if (!update.docChanged) return;
+          jsonDraft.value = update.state.doc.toString();
+          syncJsonDraft(jsonDraft.value);
+        }),
+        EditorView.theme({
+          "&": {
+            minHeight: "260px",
+            maxHeight: "360px",
+            fontSize: "12px",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-md)",
+            backgroundColor: "var(--background)",
+            color: "var(--foreground)",
+          },
+          ".cm-scroller": {
+            fontFamily: "var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+          },
+          ".cm-gutters": {
+            backgroundColor: "color-mix(in srgb, var(--muted) 35%, transparent)",
+            color: "var(--muted-foreground)",
+            borderRight: "1px solid var(--border)",
+          },
+          ".cm-activeLine, .cm-activeLineGutter": {
+            backgroundColor: "color-mix(in srgb, var(--muted) 45%, transparent)",
+          },
+          ".cm-focused": {
+            outline: "2px solid color-mix(in srgb, var(--ring) 35%, transparent)",
+            outlineOffset: "1px",
+          },
+        }),
+      ],
+    });
+
+    cmView = new EditorView({ state, parent: jsonEditorRef.value });
+    jsonEditorReady.value = true;
+  } catch (e: any) {
+    jsonEditorReady.value = false;
+    jsonEditorLoadError.value = e?.message || String(e);
+  } finally {
+    jsonEditorLoading.value = false;
+  }
+}
+
+watch(
+  () => settings.value.paramTypes,
+  (value) => {
+    if (focusedAdvancedOption.value !== "paramTypes") paramTypesDraft.value = stringifyAdvancedOption(value);
+  },
+  { deep: true, immediate: true },
+);
+
+watch(
+  () => props.modelValue,
+  (value) => {
+    if (activeMode.value === "json") {
+      const currentDraft = parseSqlFormatterConfig(jsonDraft.value);
+      if (currentDraft.ok && serializeSqlFormatterConfig(currentDraft.settings) === serializeSqlFormatterConfig(value)) {
+        validateJsonDraft(jsonDraft.value);
+        return;
+      }
+    }
+
+    const text = serializeSqlFormatterConfig(value);
+    setJsonDraftText(text);
+    if (activeMode.value === "json") validateJsonDraft(text);
+  },
+  { deep: true },
+);
+
+watch(
+  activeMode,
+  async (mode) => {
+    if (mode === "json") {
+      validateJsonDraft();
+      await nextTick();
+      await initJsonEditor();
+      return;
+    }
+    destroyJsonEditor();
+  },
+  { immediate: true },
+);
+
+onBeforeUnmount(() => {
+  previewRequestId += 1;
+  if (previewTimer) clearTimeout(previewTimer);
+  destroyJsonEditor();
+});
+</script>
+
+<template>
+  <div class="flex flex-col gap-4">
+    <div class="flex flex-wrap items-center gap-2">
+      <input ref="fileInputRef" type="file" accept="application/json,.json" class="hidden" @change="onImportFile" />
+      <Button type="button" variant="outline" size="sm" @click="importConfig">
+        <Download class="mr-2 h-4 w-4" />
+        {{ t("settings.sqlFormatterImport") }}
+      </Button>
+      <Button type="button" variant="outline" size="sm" @click="exportConfig">
+        <Upload class="mr-2 h-4 w-4" />
+        {{ t("settings.sqlFormatterExport") }}
+      </Button>
+      <Button type="button" variant="outline" size="sm" @click="restoreDefaults">
+        <RotateCcw class="mr-2 h-4 w-4" />
+        {{ t("settings.sqlFormatterRestoreDefaults") }}
+      </Button>
+    </div>
+
+    <p v-if="importError" class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+      {{ importError }}
+    </p>
+
+    <Tabs v-model="activeMode" class="min-h-0">
+      <TabsList class="grid w-full grid-cols-2">
+        <TabsTrigger value="form">{{ t("settings.sqlFormatterFormMode") }}</TabsTrigger>
+        <TabsTrigger value="json">{{ t("settings.sqlFormatterJsonMode") }}</TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="form" class="m-0 flex flex-col gap-4 pt-2">
+        <div class="grid gap-4 md:grid-cols-4">
+          <div class="space-y-2">
+            <Label>{{ t("settings.sqlFormatterKeywordCase") }}</Label>
+            <Select :model-value="settings.keywordCase" @update:model-value="(value: any) => onCaseOption('keywordCase', value)">
+              <SelectTrigger class="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="option in caseOptions" :key="option.value" :value="option.value">
+                  {{ t(option.labelKey) }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div class="space-y-2">
+            <Label>{{ t("settings.sqlFormatterFunctionCase") }}</Label>
+            <Select :model-value="settings.functionCase" @update:model-value="(value: any) => onCaseOption('functionCase', value)">
+              <SelectTrigger class="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="option in caseOptions" :key="option.value" :value="option.value">
+                  {{ t(option.labelKey) }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div class="space-y-2">
+            <Label>{{ t("settings.sqlFormatterDataTypeCase") }}</Label>
+            <Select :model-value="settings.dataTypeCase" @update:model-value="(value: any) => onCaseOption('dataTypeCase', value)">
+              <SelectTrigger class="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="option in caseOptions" :key="option.value" :value="option.value">
+                  {{ t(option.labelKey) }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div class="space-y-2">
+            <Label>{{ t("settings.sqlFormatterIdentifierCase") }}</Label>
+            <Select :model-value="settings.identifierCase" @update:model-value="onIdentifierCase">
+              <SelectTrigger class="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="option in caseOptions" :key="option.value" :value="option.value">
+                  {{ t(option.labelKey) }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div class="grid gap-4 md:grid-cols-4">
+          <div class="space-y-2">
+            <Label>{{ t("settings.sqlFormatterIndent") }}</Label>
+            <div class="grid grid-cols-2 gap-2">
+              <Button type="button" variant="outline" class="justify-center" :class="!settings.useTabs ? 'dbx-choice-selected' : ''" @click="updateOption('useTabs', false)">
+                {{ t("settings.sqlFormatterIndentSpaces") }}
+              </Button>
+              <Button type="button" variant="outline" class="justify-center" :class="settings.useTabs ? 'dbx-choice-selected' : ''" @click="updateOption('useTabs', true)">
+                {{ t("settings.sqlFormatterIndentTabs") }}
+              </Button>
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <Label>{{ t("settings.sqlFormatterTabWidth") }}</Label>
+            <Select :model-value="String(settings.tabWidth)" @update:model-value="onTabWidth">
+              <SelectTrigger class="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="width in tabWidthOptions" :key="width" :value="String(width)">
+                  {{ width }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div class="space-y-2">
+            <Label>{{ t("settings.sqlFormatterIndentStyle") }}</Label>
+            <Select :model-value="settings.indentStyle" @update:model-value="onIndentStyle">
+              <SelectTrigger class="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="option in indentStyleOptions" :key="option.value" :value="option.value">
+                  {{ t(option.labelKey) }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div class="space-y-2">
+            <Label>{{ t("settings.sqlFormatterLayoutStyle") }}</Label>
+            <Select :model-value="settings.layoutStyle" @update:model-value="onLayoutStyle">
+              <SelectTrigger class="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="option in layoutStyleOptions" :key="option.value" :value="option.value">
+                  {{ t(option.labelKey) }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div class="grid gap-4 md:grid-cols-3">
+          <div class="space-y-2">
+            <Label>{{ t("settings.sqlFormatterLogicalOperatorNewline") }}</Label>
+            <Select :model-value="settings.logicalOperatorNewline" @update:model-value="onLogicalOperatorNewline">
+              <SelectTrigger class="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="option in logicalOperatorOptions" :key="option.value" :value="option.value">
+                  {{ t(option.labelKey) }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div class="space-y-2">
+            <Label>{{ t("settings.sqlFormatterFromClauseLayout") }}</Label>
+            <Select :model-value="settings.fromClauseLayout" @update:model-value="onFromClauseLayout">
+              <SelectTrigger class="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="option in fromClauseLayoutOptions" :key="option.value" :value="option.value">
+                  {{ t(option.labelKey) }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div class="space-y-2">
+            <Label>{{ t("settings.sqlFormatterCommaPosition") }}</Label>
+            <Select :model-value="settings.commaPosition" @update:model-value="onCommaPosition">
+              <SelectTrigger class="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="option in commaPositionOptions" :key="option.value" :value="option.value">
+                  {{ t(option.labelKey) }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div class="grid gap-4 md:grid-cols-2">
+          <div class="space-y-2">
+            <Label for="sql-formatter-expression-width">{{ t("settings.sqlFormatterExpressionWidth") }}</Label>
+            <input id="sql-formatter-expression-width" type="number" min="20" max="500" step="1" :value="settings.expressionWidth" class="h-9 w-full rounded-md border border-input bg-background px-3" @change="onExpressionWidth(($event.target as HTMLInputElement).value)" />
+          </div>
+
+          <div class="space-y-2">
+            <Label>{{ t("settings.sqlFormatterLinesBetweenQueries") }}</Label>
+            <Select :model-value="String(settings.linesBetweenQueries)" @update:model-value="onLinesBetweenQueries">
+              <SelectTrigger class="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="count in linesBetweenQueriesOptions" :key="count" :value="String(count)">
+                  {{ count }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div class="grid gap-3 md:grid-cols-2">
+          <div class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+            <Label for="sql-formatter-preserve-empty-lines">{{ t("settings.sqlFormatterPreserveEmptyLines") }}</Label>
+            <Switch id="sql-formatter-preserve-empty-lines" :model-value="settings.preserveEmptyLines" @update:model-value="(value: boolean) => updateOption('preserveEmptyLines', value)" />
+          </div>
+
+          <div class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+            <Label for="sql-formatter-dense-operators">{{ t("settings.sqlFormatterDenseOperators") }}</Label>
+            <Switch id="sql-formatter-dense-operators" :model-value="settings.denseOperators" @update:model-value="(value: boolean) => updateOption('denseOperators', value)" />
+          </div>
+
+          <div class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+            <Label for="sql-formatter-newline-before-semicolon">
+              {{ t("settings.sqlFormatterNewlineBeforeSemicolon") }}
+            </Label>
+            <Switch id="sql-formatter-newline-before-semicolon" :model-value="settings.newlineBeforeSemicolon" @update:model-value="(value: boolean) => updateOption('newlineBeforeSemicolon', value)" />
+          </div>
+        </div>
+
+        <div class="space-y-3 rounded-md border border-border/70 bg-muted/10 p-3">
+          <div class="flex items-center justify-between gap-3">
+            <Label for="sql-formatter-custom-rules">{{ t("settings.sqlFormatterCustomRules") }}</Label>
+            <Switch id="sql-formatter-custom-rules" :model-value="settings.customRulesEnabled" @update:model-value="(value: boolean) => updateOption('customRulesEnabled', value)" />
+          </div>
+          <p class="text-sm text-muted-foreground">{{ t("settings.sqlFormatterCustomRulesHint") }}</p>
+          <div v-if="settings.customRulesEnabled" class="grid gap-4">
+            <div class="grid gap-3 md:grid-cols-3">
+              <label class="space-y-1 text-sm"
+                >{{ t("settings.sqlFormatterListLayout")
+                }}<select class="h-9 w-full rounded-md border bg-background px-2" :value="settings.listLayout" @change="updateOption('listLayout', ($event.target as HTMLSelectElement).value as any)">
+                  <option v-for="value in ruleEnums.layout" :key="value" :value="value">{{ t(`settings.sqlFormatterRule_${value}`) }}</option>
+                </select></label
+              >
+              <label class="space-y-1 text-sm"
+                >{{ t("settings.sqlFormatterSelectListLayout")
+                }}<select class="h-9 w-full rounded-md border bg-background px-2" :value="settings.selectListLayout" @change="updateOption('selectListLayout', ($event.target as HTMLSelectElement).value as any)">
+                  <option v-for="value in ruleEnums.layoutOverride" :key="value" :value="value">{{ t(`settings.sqlFormatterRule_${value}`) }}</option>
+                </select></label
+              >
+              <label class="space-y-1 text-sm"
+                >{{ t("settings.sqlFormatterInsertListLayout")
+                }}<select class="h-9 w-full rounded-md border bg-background px-2" :value="settings.insertListLayout" @change="updateOption('insertListLayout', ($event.target as HTMLSelectElement).value as any)">
+                  <option v-for="value in ruleEnums.layoutOverride" :key="value" :value="value">{{ t(`settings.sqlFormatterRule_${value}`) }}</option>
+                </select></label
+              >
+              <label class="space-y-1 text-sm"
+                >{{ t("settings.sqlFormatterUpdateListLayout")
+                }}<select class="h-9 w-full rounded-md border bg-background px-2" :value="settings.updateListLayout" @change="updateOption('updateListLayout', ($event.target as HTMLSelectElement).value as any)">
+                  <option v-for="value in ruleEnums.layoutOverride" :key="value" :value="value">{{ t(`settings.sqlFormatterRule_${value}`) }}</option>
+                </select></label
+              >
+              <label class="space-y-1 text-sm"
+                >{{ t("settings.sqlFormatterListItemAlignment")
+                }}<select class="h-9 w-full rounded-md border bg-background px-2" :value="settings.listItemAlignment" @change="updateOption('listItemAlignment', ($event.target as HTMLSelectElement).value as any)">
+                  <option v-for="value in ruleEnums.alignment" :key="value" :value="value">{{ t(`settings.sqlFormatterRule_${value}`) }}</option>
+                </select></label
+              >
+              <label class="space-y-1 text-sm"
+                >{{ t("settings.sqlFormatterEmptyLineMode")
+                }}<select class="h-9 w-full rounded-md border bg-background px-2" :value="settings.emptyLineMode" @change="updateOption('emptyLineMode', ($event.target as HTMLSelectElement).value as any)">
+                  <option v-for="value in ruleEnums.empty" :key="value" :value="value">{{ t(`settings.sqlFormatterRule_${value}`) }}</option>
+                </select></label
+              >
+            </div>
+            <details class="space-y-3">
+              <summary class="cursor-pointer text-sm font-medium">{{ t("settings.sqlFormatterDmlRules") }}</summary>
+              <div class="grid gap-3 pt-2 md:grid-cols-3">
+                <label v-for="{ key, titleKey } in dmlCommaRules" :key="key" class="space-y-1 text-sm"
+                  >{{ t(`settings.${titleKey}`)
+                  }}<select class="h-9 w-full rounded-md border bg-background px-2" :value="settings[key]" @change="updateOption(key, ($event.target as HTMLSelectElement).value as any)">
+                    <option v-for="option in dmlCommaPositionOptions" :key="option.value" :value="option.value">{{ t(option.labelKey) }}</option>
+                  </select></label
+                >
+                <div v-for="{ key, titleKey } in dmlToggleRules" :key="key" class="flex items-center justify-between gap-3 rounded border px-3 py-2">
+                  <Label :for="`sql-formatter-${key}`">{{ t(`settings.${titleKey}`) }}</Label
+                  ><Switch :id="`sql-formatter-${key}`" :model-value="settings[key]" @update:model-value="(value: boolean) => updateOption(key, value as any)" />
+                </div>
+              </div>
+            </details>
+            <details class="space-y-3">
+              <summary class="cursor-pointer text-sm font-medium">{{ t("settings.sqlFormatterConditionRules") }}</summary>
+              <div class="grid gap-3 pt-2 md:grid-cols-2">
+                <label v-for="{ key, titleKey } in conditionRules" :key="key" class="space-y-1 text-sm"
+                  >{{ t(`settings.${titleKey}`)
+                  }}<select class="h-9 w-full rounded-md border bg-background px-2" :value="settings[key]" @change="updateOption(key, ($event.target as HTMLSelectElement).value as any)">
+                    <option v-for="value in ruleEnums.logical" :key="value" :value="value">{{ t(`settings.sqlFormatterRule_${value}`) }}</option>
+                  </select></label
+                >
+                <div class="flex items-center justify-between gap-3 rounded border px-3 py-2">
+                  <Label for="sql-formatter-newline-before-join-on">{{ t("settings.sqlFormatterNewlineBeforeJoinOn") }}</Label
+                  ><Switch id="sql-formatter-newline-before-join-on" :model-value="settings.newlineBeforeJoinOn" @update:model-value="(value: boolean) => updateOption('newlineBeforeJoinOn', value)" />
+                </div>
+              </div>
+            </details>
+          </div>
+          <div class="space-y-3 border-t pt-3">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-medium">{{ t("settings.sqlFormatterPreview") }}</h3>
+              <label class="text-sm"
+                >{{ t("settings.sqlFormatterPreviewDialect") }}
+                <select v-model="previewDialect" class="h-8 rounded border bg-background px-2">
+                  <option value="oracle">Oracle</option>
+                  <option value="postgres">PostgreSQL</option>
+                  <option value="mysql">MySQL</option>
+                  <option value="sqlserver">SQL Server</option>
+                </select></label
+              >
+            </div>
+            <textarea v-model="previewSql" :aria-label="t('settings.sqlFormatterPreviewSource')" class="min-h-28 w-full resize-y rounded-md border bg-background p-3 font-mono text-sm" spellcheck="false" />
+            <p v-if="previewError" role="alert" class="text-sm text-destructive">{{ t("settings.sqlFormatterPreviewFailed", { message: previewError }) }}</p>
+            <p v-if="previewDiagnostic" role="status" class="text-sm text-amber-700">{{ t("settings.sqlFormatterFallbackNotice") }}</p>
+            <p v-if="previewStale" class="text-sm text-amber-700">{{ t("settings.sqlFormatterPreviewStale") }}</p>
+            <p v-if="previewLoading" role="status" class="text-sm text-muted-foreground">{{ t("settings.sqlFormatterPreviewUpdating") }}</p>
+            <pre class="max-h-64 overflow-auto rounded-md border bg-background p-3 font-mono text-sm whitespace-pre-wrap">{{ previewResult }}</pre>
+          </div>
+          <div class="text-sm font-medium">{{ t("settings.sqlFormatterAdvancedOptions") }}</div>
+          <div class="space-y-2">
+            <Label for="sql-formatter-param-types">{{ t("settings.sqlFormatterParamTypes") }}</Label>
+            <textarea
+              id="sql-formatter-param-types"
+              :value="paramTypesDraft"
+              spellcheck="false"
+              class="min-h-28 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-xs outline-none transition-colors focus:border-ring focus:ring-1 focus:ring-ring/40"
+              @input="onAdvancedJsonInput"
+              @focus="onAdvancedJsonFocus"
+              @blur="onAdvancedJsonBlur"
+            />
+          </div>
+          <p v-if="advancedConfigError" class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {{ advancedConfigError }}
+          </p>
+        </div>
+      </TabsContent>
+
+      <TabsContent value="json" data-settings-search-id="formatter-json" class="m-0 flex min-h-0 flex-col gap-3 pt-2">
+        <div class="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline" size="sm" @click="formatJsonDraft">
+            <WandSparkles class="mr-2 h-4 w-4" />
+            {{ t("settings.sqlFormatterShortcutFormatJson") }}
+          </Button>
+          <Button type="button" variant="outline" size="sm" @click="copyJsonDraft">
+            <Copy class="mr-2 h-4 w-4" />
+            {{ t("settings.sqlFormatterCopyJson") }}
+          </Button>
+          <Button type="button" size="sm" :disabled="!!jsonValidationMessage" @click="applyJsonDraft">
+            <Save class="mr-2 h-4 w-4" />
+            {{ t("settings.sqlFormatterShortcutApply") }}
+          </Button>
+          <span v-if="jsonEditorLoading" class="text-xs text-muted-foreground">{{ t("common.loading") }}</span>
+        </div>
+
+        <div ref="jsonEditorRef" v-show="jsonEditorReady || jsonEditorLoading" class="min-h-[320px]" />
+
+        <textarea
+          v-if="!jsonEditorReady && !jsonEditorLoading"
+          :value="jsonDraft"
+          spellcheck="false"
+          class="min-h-[320px] w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-xs outline-none transition-colors focus:border-ring focus:ring-1 focus:ring-ring/40"
+          @input="onJsonDraftTextareaInput"
+        />
+
+        <p v-if="jsonEditorLoadError" class="rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-400/40 dark:bg-amber-950/30 dark:text-amber-200">
+          {{ t("settings.sqlFormatterJsonEditorLoadFailed", { message: jsonEditorLoadError }) }}
+        </p>
+
+        <p v-if="jsonValidationMessage" class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {{ jsonValidationMessage }}
+        </p>
+      </TabsContent>
+    </Tabs>
+  </div>
+</template>
