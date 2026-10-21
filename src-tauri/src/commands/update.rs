@@ -16,13 +16,14 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterBuilder, UpdaterExt};
 
-const OFFICIAL_UPDATE_ENDPOINTS: [&str; 2] = [
-    "https://dl.dbxio.com/releases/latest/latest.json",
-    "https://github.com/t8y2/dbx/releases/latest/download/latest.json",
-];
-const R2_LATEST_RELEASE_DOWNLOAD_PREFIX: &str = "https://dl.dbxio.com/releases/latest/";
-const CNB_RELEASE_DOWNLOAD_PREFIX: &str = "https://cnb.cool/dbxio.com/dbx/-/releases/download/";
-const GITHUB_RELEASE_DOWNLOAD_PREFIX: &str = "https://github.com/t8y2/dbx/releases/download/";
+// Quill publishes releases only on GitHub. The "latest" and mirror prefixes map
+// onto GitHub's own URLs, so every download source resolves to Quill's releases
+// instead of DBX's CDN and CNB mirror.
+const OFFICIAL_UPDATE_ENDPOINTS: [&str; 1] =
+    ["https://github.com/devops-monk/quill/releases/latest/download/latest.json"];
+const R2_LATEST_RELEASE_DOWNLOAD_PREFIX: &str = "https://github.com/devops-monk/quill/releases/latest/download/";
+const CNB_RELEASE_DOWNLOAD_PREFIX: &str = "https://github.com/devops-monk/quill/releases/download/";
+const GITHUB_RELEASE_DOWNLOAD_PREFIX: &str = "https://github.com/devops-monk/quill/releases/download/";
 const UPDATE_DOWNLOAD_PROGRESS_EVENT: &str = "update-download-progress";
 const DOWNLOAD_CANCELED_ERROR: &str = "Download canceled by user.";
 const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -521,7 +522,7 @@ pub async fn download_update(
             cache_id: uuid::Uuid::new_v4().to_string(),
             version: version.to_string(),
             portable_mode,
-            release_url: format!("https://github.com/t8y2/dbx/releases/tag/v{version}"),
+            release_url: format!("https://github.com/devops-monk/quill/releases/tag/v{version}"),
             release_notes: release_notes.unwrap_or(notes),
             downloaded_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1052,20 +1053,12 @@ mod tests {
     }
 
     #[test]
-    fn rewrites_github_asset_url_to_cnb() {
-        let download_url = UpdateDownloadSource::Cnb
-            .rewrite_download_url("https://github.com/t8y2/dbx/releases/download/v0.5.39/DBX_0.5.39_aarch64.dmg")
-            .unwrap()
-            .unwrap();
-        assert_eq!(download_url, "https://cnb.cool/dbxio.com/dbx/-/releases/download/v0.5.39/DBX_0.5.39_aarch64.dmg");
-    }
-
-    #[test]
-    fn accepts_existing_cnb_asset_url() {
-        let download_url = UpdateDownloadSource::Cnb
-            .rewrite_download_url("https://cnb.cool/dbxio.com/dbx/-/releases/download/v0.5.39/DBX_0.5.39_aarch64.dmg")
-            .unwrap();
-        assert_eq!(download_url, None);
+    fn quill_release_urls_need_no_mirror_rewrite() {
+        // Every download source maps onto Quill's GitHub releases, so a release
+        // asset URL is already at its target and is never rewritten.
+        let url = "https://github.com/devops-monk/quill/releases/download/v0.5.39/Quill_0.5.39_aarch64.dmg";
+        assert_eq!(UpdateDownloadSource::Cnb.rewrite_download_url(url).unwrap(), None);
+        assert_eq!(UpdateDownloadSource::Official.rewrite_download_url(url).unwrap(), None);
     }
 
     #[test]
@@ -1097,27 +1090,18 @@ mod tests {
     }
 
     #[test]
-    fn builds_installer_asset_candidates_for_cnb_source() {
-        let candidates = UpdateDownloadSource::Cnb.installer_asset_candidates(
-            "https://github.com/t8y2/dbx/releases/download/v0.5.64/DBX_0.5.64_aarch64.dmg",
-            Some("0.5.64"),
-        );
-        assert_eq!(candidates.len(), 3);
-        assert_eq!(candidates[0], "https://cnb.cool/dbxio.com/dbx/-/releases/download/v0.5.64/DBX_0.5.64_aarch64.dmg");
-        assert_eq!(candidates[1], format!("{R2_LATEST_RELEASE_DOWNLOAD_PREFIX}DBX_0.5.64_aarch64.dmg"));
-        assert_eq!(candidates[2], "https://github.com/t8y2/dbx/releases/download/v0.5.64/DBX_0.5.64_aarch64.dmg");
-    }
-
-    #[test]
-    fn builds_installer_asset_candidates_for_official_source() {
-        let candidates = UpdateDownloadSource::Official.installer_asset_candidates(
-            "https://github.com/t8y2/dbx/releases/download/v0.5.64/DBX_0.5.64_aarch64.dmg",
-            Some("0.5.64"),
-        );
-        assert_eq!(candidates.len(), 2);
-        assert_eq!(candidates[0], format!("{R2_LATEST_RELEASE_DOWNLOAD_PREFIX}DBX_0.5.64_aarch64.dmg"));
-        assert_eq!(candidates[1], "https://github.com/t8y2/dbx/releases/download/v0.5.64/DBX_0.5.64_aarch64.dmg");
-        assert!(!candidates.iter().any(|url| url.contains("cnb.cool")));
+    fn installer_asset_candidates_stay_on_quill_github_releases() {
+        let url = "https://github.com/devops-monk/quill/releases/download/v0.5.64/Quill_0.5.64_aarch64.dmg";
+        for source in [UpdateDownloadSource::Official, UpdateDownloadSource::Cnb] {
+            let candidates = source.installer_asset_candidates(url, Some("0.5.64"));
+            assert!(candidates.contains(&url.to_string()), "{candidates:?}");
+            assert!(
+                candidates
+                    .iter()
+                    .all(|candidate| candidate.starts_with("https://github.com/devops-monk/quill/releases/")),
+                "{candidates:?}"
+            );
+        }
     }
 
     #[test]

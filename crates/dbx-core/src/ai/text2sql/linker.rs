@@ -395,7 +395,9 @@ impl SchemaIndex {
             })
             .collect();
 
-        hits.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| self.docs[a.index].name.cmp(&self.docs[b.index].name)));
+        hits.sort_by(|a, b| {
+            b.score.total_cmp(&a.score).then_with(|| self.docs[a.index].name.cmp(&self.docs[b.index].name))
+        });
         hits.truncate(k);
         hits
     }
@@ -404,7 +406,11 @@ impl SchemaIndex {
     pub fn link(&self, question: &str, options: LinkOptions) -> SchemaLink {
         let full_render: usize = self.docs.iter().map(|doc| render_table(doc).len() + 1).sum();
         if full_render <= options.char_budget {
-            return SchemaLink { tables: (0..self.docs.len()).collect(), join_tables: HashSet::new(), full_schema: true };
+            return SchemaLink {
+                tables: (0..self.docs.len()).collect(),
+                join_tables: HashSet::new(),
+                full_schema: true,
+            };
         }
 
         let hits: Vec<usize> = self.search(question, options.max_tables).into_iter().map(|hit| hit.index).collect();
@@ -573,7 +579,12 @@ mod tests {
             table("products", vec![pk("id"), col("title", "text"), col("unit_price", "numeric")], vec![]),
             table(
                 "orders",
-                vec![pk("id"), col("customer_id", "bigint"), col("total_amount", "numeric"), col("created_at", "timestamp")],
+                vec![
+                    pk("id"),
+                    col("customer_id", "bigint"),
+                    col("total_amount", "numeric"),
+                    col("created_at", "timestamp"),
+                ],
                 vec![fk("customer_id", "customers")],
             ),
             table(
@@ -584,7 +595,11 @@ mod tests {
             table("employees", vec![pk("id"), col("full_name", "text"), col("salary", "numeric")], vec![]),
         ];
         for i in 0..40 {
-            docs.push(table(&format!("audit_log_{i}"), vec![pk("id"), col("payload", "jsonb"), col("level", "text")], vec![]));
+            docs.push(table(
+                &format!("audit_log_{i}"),
+                vec![pk("id"), col("payload", "jsonb"), col("level", "text")],
+                vec![],
+            ));
         }
         docs
     }
@@ -659,7 +674,10 @@ mod tests {
         let linked = names(&index, &link);
         // customers <- orders <- order_items -> products: both middle tables
         // are needed and neither is named in the question.
-        assert_eq!(linked[..2].iter().collect::<HashSet<_>>(), HashSet::from([&"customers".into(), &"products".into()]));
+        assert_eq!(
+            linked[..2].iter().collect::<HashSet<_>>(),
+            HashSet::from([&"customers".into(), &"products".into()])
+        );
         assert!(linked.contains(&"orders".to_string()), "{linked:?}");
         assert!(linked.contains(&"order_items".to_string()), "{linked:?}");
         assert!(link.join_tables.contains(&index.find("order_items").unwrap()));

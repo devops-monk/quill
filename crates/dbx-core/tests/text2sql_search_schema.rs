@@ -92,7 +92,8 @@ async fn large_schema_links_the_question_and_its_join_path() {
     let output = search(&state, &connection_id, "which customers bought which products").await;
 
     assert!(output.starts_with("Tables relevant to \"which customers bought which products\""), "{output}");
-    for table in ["customers (BASE TABLE)", "products (BASE TABLE)", "orders (BASE TABLE)", "order_items (BASE TABLE)"] {
+    for table in ["customers (BASE TABLE)", "products (BASE TABLE)", "orders (BASE TABLE)", "order_items (BASE TABLE)"]
+    {
         assert!(output.contains(table), "missing {table} in:\n{output}");
     }
     assert!(!output.contains("metric_snapshot_0 (BASE TABLE)"), "unrelated tables must not be expanded:\n{output}");

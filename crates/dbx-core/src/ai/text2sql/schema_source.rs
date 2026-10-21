@@ -153,7 +153,13 @@ fn build_docs(tables: &[TableInfo], details: &HashMap<String, TableDetails>) -> 
 /// Columns and foreign keys for one table. Failures degrade to "name only"
 /// rather than failing the whole lookup: one unreadable view must not hide
 /// the rest of the schema.
-async fn load_details(state: &AppState, connection_id: &str, database: &str, schema: &str, table: &str) -> TableDetails {
+async fn load_details(
+    state: &AppState,
+    connection_id: &str,
+    database: &str,
+    schema: &str,
+    table: &str,
+) -> TableDetails {
     let columns = match crate::schema::get_columns_core(state, connection_id, database, schema, table).await {
         Ok(columns) => columns
             .into_iter()
@@ -170,7 +176,8 @@ async fn load_details(state: &AppState, connection_id: &str, database: &str, sch
             Vec::new()
         }
     };
-    let foreign_keys = match crate::schema::list_foreign_keys_core(state, connection_id, database, schema, table).await {
+    let foreign_keys = match crate::schema::list_foreign_keys_core(state, connection_id, database, schema, table).await
+    {
         Ok(keys) => keys
             .into_iter()
             .map(|key| ForeignKeyDoc { column: key.column, ref_table: key.ref_table, ref_column: key.ref_column })

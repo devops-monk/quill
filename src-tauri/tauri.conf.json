@@ -80,8 +80,8 @@
       }
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkxNEYyMzE3QkJCNkM3REYKUldUZng3YTdGeU5Qa1NnTUZCRVhJVkxsOWZKQWFPVCtacUgySlNlcjRDU2RmZElCQnphd25pYUMK",
-      "endpoints": []
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM5QUIwM0Q4MEIwNEJBNUQKUldSZHVnUUwyQU9yeWFPTUlmYUtVV0NTN0lHZDJBdXNETUdORlBiMUpJUFNXaUdyZUlLK1BLNVEK",
+      "endpoints": ["https://github.com/devops-monk/quill/releases/latest/download/latest.json"]
     }
   }
 }

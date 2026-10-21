@@ -87,7 +87,14 @@ fn is_app_release_tag(tag: &str) -> bool {
             && suffix[1..].bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-'))
 }
 
+/// Quill does not publish a changelog feed yet. The inherited feed on DBX's CDN
+/// describes DBX releases, so it must not be shown as Quill's history.
+const CHANGELOG_FEED_PUBLISHED: bool = false;
+
 pub async fn fetch_changelog(lang: &str) -> Result<ChangelogData, String> {
+    if !CHANGELOG_FEED_PUBLISHED {
+        return Ok(ChangelogData { updated_at: String::new(), releases: Vec::new() });
+    }
     let lang = normalize_changelog_lang(lang);
     let client = build_changelog_http_client()?;
     let url = format!("{}{CHANGELOG_R2_PREFIX}{lang}.json", crate::R2_CDN_BASE);

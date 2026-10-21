@@ -2,12 +2,11 @@ pub use dbx_platform::version::{is_newer_version, normalize_version, parse_versi
 
 use serde::{Deserialize, Serialize};
 
-const LATEST_JSON_GITHUB_PATH: &str = "https://github.com/t8y2/dbx/releases/latest/download/latest.json";
-const LATEST_JSON_R2_PATH: &str = "releases/latest/latest.json";
-const LATEST_JSON_CNB_PATH: &str = "https://cnb.cool/dbxio.com/dbx/-/releases/latest/download/latest.json";
+const LATEST_JSON_GITHUB_PATH: &str = "https://github.com/devops-monk/quill/releases/latest/download/latest.json";
 const LATEST_EN_NOTES_R2_PATH: &str = "changelog/latest-en.json";
-const GITHUB_RELEASE_API_PREFIX: &str = "https://api.github.com/repos/t8y2/dbx/releases/tags/v";
-const RELEASE_URL_PREFIX: &str = "https://github.com/t8y2/dbx/releases/tag/v";
+const ENGLISH_NOTES_FEED_PUBLISHED: bool = false;
+const GITHUB_RELEASE_API_PREFIX: &str = "https://api.github.com/repos/devops-monk/quill/releases/tags/v";
+const RELEASE_URL_PREFIX: &str = "https://github.com/devops-monk/quill/releases/tag/v";
 
 #[derive(Debug, Deserialize)]
 pub struct TauriRelease {
@@ -87,23 +86,21 @@ async fn fetch_first_available(client: &reqwest::Client, candidates: &[String]) 
     Err(format!("Failed to check updates: {}", errors.join("; ")))
 }
 
-fn update_check_candidates(source: crate::DownloadSource) -> Vec<String> {
-    match source {
-        crate::DownloadSource::Official => {
-            vec![format!("{}{LATEST_JSON_R2_PATH}", crate::R2_CDN_BASE), LATEST_JSON_GITHUB_PATH.to_string()]
-        }
-        // CNB exposes a moving latest release, so checking CNB does not need an official-source version first.
-        crate::DownloadSource::Cnb => vec![
-            LATEST_JSON_CNB_PATH.to_string(),
-            format!("{}{LATEST_JSON_R2_PATH}", crate::R2_CDN_BASE),
-            LATEST_JSON_GITHUB_PATH.to_string(),
-        ],
-    }
+/// Quill releases are published only on GitHub; the CDN and CNB mirrors the
+/// download-source setting can name belong to DBX and carry DBX builds.
+fn update_check_candidates(_source: crate::DownloadSource) -> Vec<String> {
+    vec![LATEST_JSON_GITHUB_PATH.to_string()]
 }
 
 // 拉取 R2 上的英文 release notes（仅最新版本）。version 必须与 latest.json 的 version 一致才采用，
 // 防止 sync-changelog 尚未更新时拿到旧版本英文 notes。
 async fn fetch_latest_release_notes_en(client: &reqwest::Client, expected_version: &str) -> Result<String, String> {
+    // The English notes feed lives on DBX's CDN and describes DBX releases. Quill
+    // uses the notes in its own latest.json until it publishes a separate feed.
+    if !ENGLISH_NOTES_FEED_PUBLISHED {
+        let _ = (client, expected_version);
+        return Err("Quill does not publish a separate English notes feed".to_string());
+    }
     let url = format!("{}{LATEST_EN_NOTES_R2_PATH}", crate::R2_CDN_BASE);
     let resp = client
         .get(&url)
@@ -294,21 +291,9 @@ mod tests {
     }
 
     #[test]
-    fn update_check_candidates_follow_selected_source() {
-        assert_eq!(
-            super::update_check_candidates(crate::DownloadSource::Official),
-            vec![
-                "https://dl.dbxio.com/releases/latest/latest.json",
-                "https://github.com/t8y2/dbx/releases/latest/download/latest.json",
-            ]
-        );
-        assert_eq!(
-            super::update_check_candidates(crate::DownloadSource::Cnb),
-            vec![
-                "https://cnb.cool/dbxio.com/dbx/-/releases/latest/download/latest.json",
-                "https://dl.dbxio.com/releases/latest/latest.json",
-                "https://github.com/t8y2/dbx/releases/latest/download/latest.json",
-            ]
-        );
+    fn update_checks_use_only_quill_github_releases() {
+        let quill_latest = vec!["https://github.com/devops-monk/quill/releases/latest/download/latest.json"];
+        assert_eq!(super::update_check_candidates(crate::DownloadSource::Official), quill_latest);
+        assert_eq!(super::update_check_candidates(crate::DownloadSource::Cnb), quill_latest);
     }
 }

@@ -53,7 +53,7 @@ mod tests {
     /// URL field code both arrive empty, so the contract is pinned here.
     #[test]
     fn linux_desktop_entry_forwards_urls_and_files() {
-        let template = include_str!("../../linux/DBX.desktop");
+        let template = include_str!("../../linux/Quill.desktop");
 
         let exec =
             template.lines().find_map(|line| line.strip_prefix("Exec=")).expect("desktop entry must declare Exec=");
@@ -79,7 +79,7 @@ mod tests {
         for target in ["deb", "rpm"] {
             assert_eq!(
                 config["bundle"]["linux"][target]["desktopTemplate"].as_str(),
-                Some("linux/DBX.desktop"),
+                Some("linux/Quill.desktop"),
                 "{target} bundle must use the custom desktop entry"
             );
         }

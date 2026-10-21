@@ -534,12 +534,12 @@ LangString dbxWin7InstallerRequired ${LANG_SIMPCHINESE} "此安装包不支持 W
 LangString dbxWin7InstallerRequired ${LANG_TRADCHINESE} "此安裝套件不支援 Windows 7 或 Windows Server 2012 R2。$\r$\n$\r$\n請改用 Windows 7 / Server 2012 R2 專用套件。$\r$\n$\r$\n是否立即開啟下載網址？"
 FileErrorText "$(dbxFileWriteErrorNoIgnore)" "$(dbxFileWriteErrorNoIgnore)"
 
-LangString dbxElevationFailed ${LANG_ENGLISH} "Administrator permission is required to install DBX in this folder. Permission was denied or the elevated installer could not be started."
+LangString dbxElevationFailed ${LANG_ENGLISH} "Administrator permission is required to install Quill in this folder. Permission was denied or the elevated installer could not be started."
 LangString dbxElevationFailed ${LANG_SIMPCHINESE} "安装到此目录需要管理员权限。授权已被拒绝，或无法启动提权后的安装程序。"
 LangString dbxElevationFailed ${LANG_TRADCHINESE} "安裝到此目錄需要系統管理員權限。授權已被拒絕，或無法啟動提升權限後的安裝程式。"
-LangString dbxElevationUserMismatch ${LANG_ENGLISH} "Please approve elevation using the same Windows account that started this installer, so DBX keeps its installation and shortcuts in the correct user profile."
-LangString dbxElevationUserMismatch ${LANG_SIMPCHINESE} "请使用启动安装程序的同一个 Windows 账户授权提权，以确保 DBX 的安装信息和快捷方式保留在正确的用户配置中。"
-LangString dbxElevationUserMismatch ${LANG_TRADCHINESE} "請使用啟動安裝程式的同一個 Windows 帳戶授權提升權限，以確保 DBX 的安裝資訊和捷徑保留在正確的使用者設定中。"
+LangString dbxElevationUserMismatch ${LANG_ENGLISH} "Please approve elevation using the same Windows account that started this installer, so Quill keeps its installation and shortcuts in the correct user profile."
+LangString dbxElevationUserMismatch ${LANG_SIMPCHINESE} "请使用启动安装程序的同一个 Windows 账户授权提权，以确保 Quill 的安装信息和快捷方式保留在正确的用户配置中。"
+LangString dbxElevationUserMismatch ${LANG_TRADCHINESE} "請使用啟動安裝程式的同一個 Windows 帳戶授權提升權限，以確保 Quill 的安裝資訊和捷徑保留在正確的使用者設定中。"
 
 Function DbxUpdateElevationStatus
   ; Compact support code: A=admin, E=elevation state, F/D=access prechecks.
