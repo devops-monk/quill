@@ -11827,8 +11827,8 @@ LIMIT 100;</pre>
                           </span>
                         </SelectValue>
                       </SelectTrigger>
-                      <SelectContent class="w-[32rem] max-w-[calc(100vw-2rem)]">
-                        <div class="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                      <SelectContent class="max-w-[calc(100vw-2rem)]" :class="partnerAiProviderOptions.length ? 'w-[32rem]' : 'w-[16rem]'">
+                        <div class="grid grid-cols-1 gap-1" :class="{ 'sm:grid-cols-2': partnerAiProviderOptions.length }">
                           <SelectGroup class="min-w-0">
                             <SelectLabel>{{ t("ai.builtinProviders") }}</SelectLabel>
                             <SelectItem v-for="provider in builtinAiProviderOptions" :key="provider.provider" :value="provider.provider">

@@ -1096,20 +1096,8 @@ test("AI provider presets include common hosted and local providers", () => {
   assert.ok(Object.keys(AI_PROVIDER_PRESETS).indexOf("codex-cli") < Object.keys(AI_PROVIDER_PRESETS).indexOf("pi-agent-cli"));
 });
 
-test("AI partner presets reuse a supported runtime adapter", () => {
-  const jalapeno = AI_PROVIDER_PARTNER_PRESETS.find((preset) => preset.id === "jalapeno-cloud");
-
-  assert.ok(jalapeno);
-  assert.equal(jalapeno.provider, "openai-compatible");
-  assert.equal(jalapeno.endpoint, "https://api.jalapeno-cloud.ai/v1");
-  assert.ok(jalapeno.model);
-  assert.ok(jalapeno.models.some(({ name }) => name === jalapeno.model));
-  assert.equal(jalapeno.requiresApiKey, true);
-  assert.equal(jalapeno.websiteUrl, "https://www.jalapeno-cloud.ai/dbx");
-  assert.equal(jalapeno.apiKeyUrl, "https://www.jalapeno-cloud.ai/dbx");
-  assert.equal(getAiProviderPreset("openai-compatible", "https://api.jalapeno-cloud.ai/v1/").label, "Jalapeno Cloud");
-  assert.equal(getAiProviderPresetId("openai-compatible", "https://api.jalapeno-cloud.ai/v1/"), "jalapeno-cloud");
-  assert.equal(getAiProviderPreset("openai-compatible", "https://api.example.com/v1").label, "OpenAI Compatible");
+test("Quill ships no sponsored AI partner presets", () => {
+  assert.deepEqual(AI_PROVIDER_PARTNER_PRESETS, []);
 });
 
 test("API AI provider settings expose and persist a default model ID", () => {
