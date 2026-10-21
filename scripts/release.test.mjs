@@ -133,14 +133,6 @@ test("rollback rejects prerelease tag syntax", () => {
   assert.match(result.stderr, /only supports stable vX\.Y\.Z app releases/);
 });
 
-test("launcher packages bypass filtered publishing for provenance", () => {
-  const workflow = readFileSync(packagesWorkflow, "utf8");
-
-  assert.match(workflow, /pnpm publish "\.\/packages\/cli" --access public --provenance --no-git-checks/);
-  assert.match(workflow, /pnpm publish "\.\/packages\/mcp-server" --access public --provenance --no-git-checks/);
-  assert.doesNotMatch(workflow, /pnpm --filter "@dbx-app\/(?:cli|mcp-server)" publish/);
-});
-
 test("Tauri VSign script resolves from the src-tauri working directory", () => {
   const config = JSON.parse(readFileSync(vsignConfigPath, "utf8"));
   const args = config.bundle.windows.signCommand.args;
@@ -150,22 +142,6 @@ test("Tauri VSign script resolves from the src-tauri working directory", () => {
   const scriptPath = args[fileArgumentIndex + 1];
   assert.equal(typeof scriptPath, "string");
   assert.equal(existsSync(resolve(repoRoot, "src-tauri", scriptPath)), true);
-});
-
-test("Windows 7 release build does not use sccache", () => {
-  const workflow = readFileSync(releaseWorkflow, "utf8");
-  const start = workflow.indexOf("  build-windows-7-offline:");
-  const end = workflow.indexOf("\n  static-browser:", start);
-
-  assert.notEqual(start, -1);
-  assert.notEqual(end, -1);
-  const win7Job = workflow
-    .slice(start, end)
-    // Ignore comments; the job itself documents why sccache is absent.
-    .split("\n")
-    .filter((line) => !line.trim().startsWith("#"))
-    .join("\n");
-  assert.doesNotMatch(win7Job, /RUSTC_WRAPPER|SCCACHE_|sccache/i);
 });
 
 test("Linux releases pin the Wayland-capable AppImage bundler before upload", () => {

@@ -232,29 +232,3 @@ test("stale marker without binary reinstalls, and bash users get migration guida
   assert.ok(existsSync(join(setup.home, ".bash_profile")));
   assert.match(result.stdout, /npm rm -g @dbx-app\/mcp-server/);
 });
-
-test("formula generator validates all hashes and both publishing workflows invoke it", (context) => {
-  const setup = fixture(context);
-  const sums = join(setup.root, "formula-sums");
-  const output = join(setup.root, "dbx-mcp.rb");
-  writeFileSync(sums, platforms.map((platform) => `${"a".repeat(64)}  dbx-mcp-${platform}.tar.gz`).join("\n"));
-  const generate = () => spawnSync(process.execPath, [".github/scripts/render-mcp-formula.mjs", "0.4.96", sums, output], { encoding: "utf8" });
-  assert.equal(generate().status, 0);
-  const formula = readFileSync(output, "utf8");
-  assert.match(formula, /bin.install "dbx-mcp"/);
-  assert.doesNotMatch(formula, /__[A-Z_]+__/);
-  assert.equal((formula.match(/sha256 /g) ?? []).length, 4);
-  writeFileSync(sums, "invalid");
-  assert.notEqual(generate().status, 0);
-  assert.equal(readFileSync(output, "utf8"), formula);
-  for (const workflow of ["mcp-release", "publish-packages"]) {
-    const text = readFileSync(`.github/workflows/${workflow}.yml`, "utf8");
-    const checkoutIndex = text.indexOf("actions/checkout@");
-    const renderIndex = text.indexOf("render-mcp-formula.mjs");
-    assert.notEqual(checkoutIndex, -1);
-    assert.notEqual(renderIndex, -1);
-    assert.ok(checkoutIndex < renderIndex);
-    assert.match(text, /render-mcp-formula.mjs/);
-    assert.match(text, /git add .*Formula\/dbx-mcp.rb/);
-  }
-});

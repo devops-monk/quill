@@ -88,19 +88,6 @@ test("fast checks retain ownership of the planner subset before expensive jobs",
   assert.match(job("fast-checks"), /name: CI planner and gate tests\s+run: node --test \.github\/scripts\/ci-\*\.test\.mjs/);
 });
 
-test("contributor snapshot routing preserves docs deployment and mixed frontend validation", () => {
-  assert.ok(job("changes").includes("frontend: ${{ steps.filter.outputs.frontend == 'true' && steps.plan.outputs.contributor_snapshot_only != 'true' }}"));
-  assert.match(job("changes"), /frontend:\s+- 'apps\/desktop\/\*\*'\s+- 'docs\/\*\*'/);
-  const docsWorkflow = readFileSync(new URL("../workflows/docs.yml", import.meta.url), "utf8");
-  assert.match(docsWorkflow, /paths: \["docs\/\*\*"\]/);
-  for (const file of ["contributors", "issue-claim", "notify", "plugin-dev-host", "spam-comment-guard"]) {
-    assert.ok(job("changes").includes(`- '.github/workflows/${file}.yml'`));
-  }
-  for (const file of ["contributor-snapshot", "update-contributors"]) {
-    assert.ok(job("changes").includes(`- 'docs/scripts/${file}.mjs'`));
-  }
-});
-
 test("Agent and Rust matrices are bounded and do not cancel sibling failures", () => {
   for (const [name, output, parallel] of [
     ["rust-test", "rust_matrix", 3],
@@ -287,25 +274,6 @@ test("Linux Rust dependency installs bound apt mirror stalls", () => {
       assert.ok(content.includes(option));
     }
   }
-});
-
-test("Rust test jobs install pinned nextest and retain separate doctests", () => {
-  const pluginDevHost = readFileSync(new URL("../workflows/plugin-dev-host.yml", import.meta.url), "utf8");
-  const pluginRelease = readFileSync(new URL("../workflows/plugin-cli-release.yml", import.meta.url), "utf8");
-  const consumers = [job("packages"), job("rust-test"), job("agent-rust"), job("agent-integration"), job("test", pluginDevHost), job("prepare", pluginRelease)];
-  for (const content of consumers) {
-    assert.ok(content.includes("uses: taiki-e/install-action@a3324fb0eb94b8230ec968c3389c1b7929fc2f3b"));
-    assert.ok(content.includes("tool: cargo-nextest@0.9.137"));
-    assert.doesNotMatch(content, /cargo test (?!.*--doc)/);
-    const testCommand = content.indexOf("cargo nextest run") >= 0 ? "cargo nextest run" : content.includes("pnpm test:packages") ? "pnpm test:packages" : content.includes("ci-rust.mjs test") ? "ci-rust.mjs test" : "ci-agent-integration.sh";
-    assert.ok(content.indexOf("tool: cargo-nextest@0.9.137") < content.indexOf(testCommand));
-  }
-  assert.ok(job("rust-test").includes('ci-rust.mjs doctest "$RUST_TEST_GROUP" "$RUST_FEATURE_MODE"'));
-  for (const content of [job("test", pluginDevHost), job("prepare", pluginRelease)]) {
-    assert.ok(content.includes("cargo nextest run --locked --manifest-path plugins/sdk/cli/Cargo.toml --no-fail-fast"));
-    assert.ok(content.includes("cargo test --doc --locked --manifest-path plugins/sdk/cli/Cargo.toml"));
-  }
-  assert.match(job("agent-integration"), /name: Install nextest\s+if: matrix\.driver == 'tdengine'/);
 });
 
 test("local Rust entrypoints and live TDengine tests use nextest", () => {

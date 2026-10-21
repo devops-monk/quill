@@ -1,0 +1,186 @@
+name: Release
+
+# Builds Quill for macOS, Windows and Linux.
+#
+# - Pushing a tag like v0.7.0 builds every platform into a draft GitHub
+#   release, then publishes it once every build succeeded. The website's
+#   download buttons and the in-app updater read the latest published release.
+# - Running the workflow by hand (Actions > Release > Run workflow) builds the
+#   same installers and attaches them to the run as artifacts, without
+#   creating a release.
+#
+# Secrets:
+# - TAURI_SIGNING_PRIVATE_KEY (required): signs update bundles; the matching
+#   public key is in src-tauri/tauri.conf.json.
+# - APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
+#   APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID (optional): Developer ID signing
+#   and notarization. Without them macOS builds are ad-hoc signed.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Apple Silicon)
+            runner: macos-latest
+            target: aarch64-apple-darwin
+          - name: macOS (Intel)
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - name: Linux (x64)
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - name: Linux (ARM64)
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+          - name: Windows (x64)
+            runner: windows-2022
+            target: x86_64-pc-windows-msvc
+          - name: Windows (ARM64)
+            runner: windows-2022
+            target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    env:
+      CARGO_INCREMENTAL: "0"
+      HAS_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      LINUXDEPLOY_EXCLUDED_LIBRARIES: "libwayland-*.so*;libxkbcommon.so*;libxcb-randr.so*;libxcb-render.so*;libxcb-shm.so*;libXau.so*;libXdmcp.so*"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./ -> target"
+          shared-key: release-${{ matrix.target }}
+          cache-on-failure: true
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fcitx5-frontend-gtk3 ibus-gtk3 libwebkit2gtk-4.1-dev libgtk-3-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev xdg-utils
+
+      - name: Prepare Wayland-capable AppImage bundler
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          XDG_CACHE_HOME: ${{ runner.temp }}/dbx-tauri-cache
+        run: ./.github/scripts/prepare-appimage-bundler.sh "${{ matrix.target }}"
+
+      - name: Import Apple signing certificate
+        if: runner.os == 'macOS' && env.HAS_APPLE_CERTIFICATE == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          echo -n "$APPLE_CERTIFICATE" | base64 --decode -o "$CERTIFICATE_PATH"
+          security create-keychain -p "" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+      - name: Choose macOS signing identity
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          # "-" is an ad-hoc signature: Apple Silicon refuses to launch unsigned
+          # binaries, and ad-hoc signing needs no certificate.
+          echo "APPLE_SIGNING_IDENTITY=${APPLE_SIGNING_IDENTITY:--}" >> "$GITHUB_ENV"
+
+      - name: Build Tauri app
+        if: github.ref_type == 'tag'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Quill ${{ github.ref_name }}
+          releaseBody: |
+            Downloads for macOS, Windows and Linux are below.
+
+            **macOS:** if the app isn't notarized yet, right-click Quill.app and choose Open the first time.
+            **Windows:** if SmartScreen warns about an unknown publisher, choose More info > Run anyway.
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}
+
+      - name: Build Tauri app (run artifacts only)
+        if: github.ref_type != 'tag'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        with:
+          args: --target ${{ matrix.target }}
+
+      - name: Verify AppImage runtime bundle
+        if: runner.os == 'Linux'
+        shell: bash
+        run: ./.github/scripts/verify-appimage-input-methods.sh "target/${{ matrix.target }}/release/bundle/appimage"
+
+      - name: Upload installers as run artifacts
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: quill-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz
+            target/${{ matrix.target }}/release/bundle/nsis/*.exe
+            target/${{ matrix.target }}/release/bundle/msi/*.msi
+            target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
+            target/${{ matrix.target }}/release/bundle/deb/*.deb
+            target/${{ matrix.target }}/release/bundle/rpm/*.rpm
+
+  publish:
+    name: Publish release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false --latest
