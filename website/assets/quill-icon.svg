@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#232842"/>
+      <stop offset="1" stop-color="#11131F"/>
+    </linearGradient>
+    <linearGradient id="nib" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#818CF8"/>
+      <stop offset="0.55" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#A855F7"/>
+    </linearGradient>
+    <linearGradient id="cap" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#C7D2FE"/>
+      <stop offset="1" stop-color="#E9D5FF"/>
+    </linearGradient>
+    <linearGradient id="caret" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FDE68A"/>
+      <stop offset="1" stop-color="#F59E0B"/>
+    </linearGradient>
+    <filter id="glow" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <feGaussianBlur stdDeviation="12" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="shadow" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+    <path id="body" d="M332 300 L332 470 C340 600 470 700 512 820 C554 700 684 600 692 470 L692 300 A180 56 0 0 0 332 300 Z"/>
+    <clipPath id="bodyClip"><use href="#body"/></clipPath>
+  </defs>
+
+  <!-- macOS-style tile with standard 100px safe margin -->
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)"/>
+  <rect x="101" y="101" width="822" height="822" rx="185" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="2"/>
+
+  <!-- Nib body: database cylinder tapering to a writing point -->
+  <g filter="url(#shadow)">
+    <use href="#body" fill="url(#nib)"/>
+  </g>
+  <g clip-path="url(#bodyClip)">
+    <!-- Right nib half sits in shade -->
+    <rect x="512" y="520" width="200" height="320" fill="#1E1B4B" fill-opacity="0.22"/>
+    <!-- Disc separators -->
+    <path d="M320 372 A192 60 0 0 0 704 372" fill="none" stroke="#11131F" stroke-opacity="0.5" stroke-width="12"/>
+    <path d="M320 444 A192 60 0 0 0 704 444" fill="none" stroke="#11131F" stroke-opacity="0.5" stroke-width="12"/>
+  </g>
+  <!-- Cylinder top -->
+  <ellipse cx="512" cy="300" rx="180" ry="56" fill="url(#cap)"/>
+
+  <!-- Slit as a glowing text caret, breather hole as the spark -->
+  <g filter="url(#glow)">
+    <rect x="503" y="596" width="18" height="200" rx="9" fill="url(#caret)"/>
+    <circle cx="512" cy="560" r="28" fill="#FCD34D"/>
+  </g>
+
+  <!-- AI sparkle -->
+  <path filter="url(#glow)" fill="#FCD34D" d="M760 196 C766 236 780 250 820 256 C780 262 766 276 760 316 C754 276 740 262 700 256 C740 250 754 236 760 196 Z"/>
+</svg>

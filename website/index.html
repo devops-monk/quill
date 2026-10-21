@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quill — Write your data in plain words</title>
+  <meta name="description" content="Quill is a desktop database client for nearly 90 databases. Ask a question in plain English and Quill finds the right tables, writes the SQL and shows you the answer." />
+  <meta property="og:title" content="Quill — Write your data in plain words" />
+  <meta property="og:description" content="Ask your database a question in plain English. Quill reads the schema, writes the SQL and shows the answer." />
+  <meta property="og:image" content="https://quill.devops-monk.com/assets/apple-touch-icon.png" />
+  <meta name="theme-color" content="#F7F8FC" />
+  <link rel="icon" type="image/svg+xml" href="assets/quill-icon.svg" />
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="#top" aria-label="Quill home">
+        <img src="assets/quill-icon.svg" alt="" width="24" height="24" />
+        <span>Quill</span>
+      </a>
+      <nav aria-label="Sections">
+        <a href="#ask">Ask</a>
+        <a href="#schema">Schema</a>
+        <a href="#databases">Databases</a>
+        <a href="#safety">Safety</a>
+      </nav>
+      <a class="nav-cta" href="https://github.com/devops-monk/quill">GitHub</a>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <img class="hero-icon" src="assets/quill-icon.svg" alt="Quill icon: a pen nib shaped like a database, with a glowing cursor" width="132" height="132" />
+      <h1>Quill</h1>
+      <p class="tagline">Write your data in plain words.</p>
+      <p class="lede">Ask your database a question in plain English. Quill reads the schema, writes the SQL, and shows you the answer.</p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/devops-monk/quill">View on GitHub</a>
+        <a class="button link" href="#ask">See how it works</a>
+      </div>
+      <p class="availability">Coming to macOS, Windows and Linux.</p>
+    </section>
+
+    <section class="demo-wrap" id="ask" aria-label="Example: asking a question">
+      <div class="window" data-demo>
+        <div class="window-bar" aria-hidden="true">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="window-title">shop.sqlite</span>
+        </div>
+        <div class="window-body">
+          <aside class="window-side" aria-hidden="true">
+            <p class="side-conn">shop.sqlite</p>
+            <ul>
+              <li data-table="customers">customers</li>
+              <li data-table="order_items">order_items</li>
+              <li data-table="orders">orders</li>
+              <li data-table="products">products</li>
+            </ul>
+          </aside>
+          <div class="window-main">
+            <div class="ask-field">
+              <img src="assets/quill-icon.svg" alt="" width="20" height="20" />
+              <p><span class="typed" data-typed>Which products made the most money this year?</span><span class="caret" aria-hidden="true"></span></p>
+            </div>
+
+            <div class="step step-tables" data-step="tables">
+              <p>Used 3 tables: <span class="chip">products</span> <span class="chip">order_items</span> <span class="chip">orders</span></p>
+            </div>
+
+            <pre class="step sql" data-step="sql"><code><span class="k">SELECT</span> p.title,
+       <span class="f">SUM</span>(oi.quantity * p.unit_price) <span class="k">AS</span> revenue
+<span class="k">FROM</span> order_items oi
+<span class="k">JOIN</span> products p <span class="k">ON</span> p.id = oi.product_id
+<span class="k">JOIN</span> orders o <span class="k">ON</span> o.id = oi.order_id
+<span class="k">WHERE</span> o.created_at &gt;= <span class="s">'2026-01-01'</span>
+<span class="k">GROUP BY</span> p.title
+<span class="k">ORDER BY</span> revenue <span class="k">DESC</span>
+<span class="k">LIMIT</span> <span class="n">5</span>;</code></pre>
+
+            <div class="step answer" data-step="answer">
+              <p class="answer-text">The 4K Monitor brought in $26,320 this year, almost three times as much as the next product.</p>
+              <ol class="bars">
+                <li style="--v: 1"><span class="bar-label">4K Monitor</span><span class="bar"><span></span></span><span class="bar-value">$26,320</span></li>
+                <li style="--v: 0.355"><span class="bar-label">Noise-cancelling Headphones</span><span class="bar"><span></span></span><span class="bar-value">$9,353</span></li>
+                <li style="--v: 0.233"><span class="bar-label">Mechanical Keyboard</span><span class="bar"><span></span></span><span class="bar-value">$6,141</span></li>
+                <li style="--v: 0.182"><span class="bar-label">Webcam</span><span class="bar"><span></span></span><span class="bar-value">$4,779</span></li>
+                <li style="--v: 0.14"><span class="bar-label">Desk Lamp</span><span class="bar"><span></span></span><span class="bar-value">$3,690</span></li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      </div>
+      <button class="replay" type="button" data-replay hidden>Play again</button>
+    </section>
+
+    <section class="dark" id="schema">
+      <div class="split">
+        <div class="copy">
+          <h2>It reads your schema before it writes a line.</h2>
+          <p>Quill matches the words in your question against table names, columns and comments. Then it follows foreign keys to find how those tables connect, including the ones you never mentioned.</p>
+          <p>In a database with 204 tables, “which customers bought which products” brings back exactly four: the two you named and the two that join them.</p>
+        </div>
+        <figure class="graph">
+          <svg viewBox="0 0 460 360" role="img" aria-labelledby="graph-title graph-desc">
+            <title id="graph-title">Join path between customers and products</title>
+            <desc id="graph-desc">Customers connect to orders, orders to order items, and order items to products. Customers and products are named in the question; orders and order items are found through foreign keys. Other tables stay out of the way.</desc>
+            <g class="ghosts">
+              <rect x="20" y="20" width="96" height="30" rx="7" /><rect x="186" y="16" width="96" height="30" rx="7" />
+              <rect x="344" y="24" width="96" height="30" rx="7" /><rect x="24" y="312" width="96" height="30" rx="7" />
+              <rect x="176" y="318" width="96" height="30" rx="7" /><rect x="40" y="226" width="96" height="30" rx="7" />
+            </g>
+            <g class="edges">
+              <path d="M150 126 C 150 165, 165 188, 200 188" />
+              <path d="M310 188 C 332 188, 340 165, 340 126" />
+              <path d="M410 126 L 410 250" />
+            </g>
+            <g class="node named"><rect x="30" y="90" width="140" height="36" rx="9" /><text x="100" y="113">customers</text></g>
+            <g class="node found"><rect x="200" y="170" width="110" height="36" rx="9" /><text x="255" y="193">orders</text></g>
+            <g class="node found"><rect x="300" y="90" width="140" height="36" rx="9" /><text x="370" y="113">order_items</text></g>
+            <g class="node named"><rect x="300" y="250" width="140" height="36" rx="9" /><text x="370" y="273">products</text></g>
+          </svg>
+          <figcaption><span class="key named"></span>Named in your question <span class="key found"></span>Found through foreign keys</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="databases" id="databases">
+      <h2>Nearly 90 databases. One window.</h2>
+      <p class="section-lede">Relational, analytical, document, key-value, search, vector and time-series. Connect directly, over SSH, or through JDBC.</p>
+      <p class="wall" aria-label="Supported databases include">
+        <span class="w1">PostgreSQL</span> <span class="w2">MySQL</span> <span class="w3">SQLite</span> <span class="w1">SQL Server</span> <span class="w2">Oracle</span> <span class="w3">ClickHouse</span> <span class="w1">DuckDB</span> <span class="w3">MongoDB</span> <span class="w2">Redis</span> <span class="w3">Snowflake</span> <span class="w1">BigQuery</span> <span class="w2">Elasticsearch</span> <span class="w3">Cassandra</span> <span class="w2">Redshift</span> <span class="w3">Databricks SQL</span> <span class="w1">MariaDB</span> <span class="w3">Trino</span> <span class="w2">Neo4j</span> <span class="w3">IBM DB2</span> <span class="w2">SAP HANA</span> <span class="w1">DynamoDB</span> <span class="w3">Cloud Spanner</span> <span class="w2">Cloudflare D1</span> <span class="w3">Turso</span> <span class="w1">StarRocks</span> <span class="w2">Doris</span> <span class="w3">Vertica</span> <span class="w2">Teradata</span> <span class="w3">Hive</span> <span class="w1">Spark</span> <span class="w3">Qdrant</span> <span class="w2">Milvus</span> <span class="w3">Weaviate</span> <span class="w2">ChromaDB</span> <span class="w1">InfluxDB</span> <span class="w3">QuestDB</span> <span class="w2">TDengine</span> <span class="w3">Meilisearch</span> <span class="w2">Solr</span> <span class="w3">CouchDB</span> <span class="w1">Firebird</span> <span class="w3">H2</span> <span class="w2">Exasol</span> <span class="w3">OceanBase</span> <span class="w2">openGauss</span> <span class="w3">etcd</span> <span class="w3">ZooKeeper</span> <span class="more">and many more</span>
+      </p>
+    </section>
+
+    <section class="safety" id="safety">
+      <div class="split reverse">
+        <div class="copy">
+          <h2>Read-only until you say yes.</h2>
+          <p>Answers come from read-only queries. When a request would change data, Quill shows you the exact statement and waits. Nothing runs until you approve it.</p>
+          <p>Mark a connection as production, or lock it to read-only, and it stays that way.</p>
+        </div>
+        <div class="approval" aria-label="Example approval prompt">
+          <p class="approval-ask">Delete orders placed before 2025?</p>
+          <pre><code><span class="k">DELETE FROM</span> orders
+<span class="k">WHERE</span> created_at &lt; <span class="s">'2025-01-01'</span>;</code></pre>
+          <p class="approval-note">This changes data. Quill will only run it after you confirm.</p>
+          <div class="approval-actions" aria-hidden="true">
+            <span class="fake-button quiet">Cancel</span>
+            <span class="fake-button danger">Run this DELETE</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="private">
+      <h2>Your schema stays close.</h2>
+      <p class="section-lede">Finding the right tables happens on your computer, with no extra service. Only the few tables a question needs go to the model you pick.</p>
+      <ul class="models" aria-label="Supported AI models">
+        <li>Claude</li><li>OpenAI</li><li>Gemini</li><li>DeepSeek</li><li>Any OpenAI-compatible API</li><li class="local">Ollama, fully local</li>
+      </ul>
+    </section>
+
+    <section class="closing">
+      <img src="assets/quill-icon.svg" alt="" width="96" height="96" />
+      <h2>Ask your first question.</h2>
+      <p class="section-lede">Quill is open source. Build it today, or follow along for the first release.</p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/devops-monk/quill">View on GitHub</a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Quill is built on <a href="https://github.com/t8y2/dbx">DBX</a> and adapts ideas from <a href="https://github.com/eosphoros-ai/DB-GPT">DB-GPT</a>. Licensed under Apache 2.0.</p>
+  </footer>
+
+  <script src="assets/main.js" defer></script>
+</body>
+</html>
