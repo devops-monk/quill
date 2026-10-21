@@ -3664,6 +3664,7 @@ export default withEnglishFallback({
         executeQuery: "Eksekusi kueri",
         executeSql: "Eksekusi SQL",
         listTables: "Daftar tabel",
+        searchSchema: "Cari skema",
         getColumns: "Dapatkan kolom",
         getCurrentTime: "Dapatkan waktu saat ini",
         explainQuery: "Jelaskan rencana kueri",

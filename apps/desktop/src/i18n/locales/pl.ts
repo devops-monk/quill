@@ -3730,6 +3730,7 @@ export default withEnglishFallback({
         executeQuery: "Wykonaj zapytanie",
         executeSql: "Wykonaj SQL",
         listTables: "Wyświetl tabele",
+        searchSchema: "Przeszukaj schemat",
         getColumns: "Pobierz kolumny",
         getCurrentTime: "Pobierz bieżący czas",
         explainQuery: "Objaśnij plan zapytania",

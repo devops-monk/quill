@@ -3993,6 +3993,7 @@ export default withEnglishFallback({
         executeQuery: "執行查詢",
         executeSql: "執行 SQL",
         listTables: "列出資料表",
+        searchSchema: "檢索相關資料表",
         getColumns: "讀取欄位",
         getCurrentTime: "取得目前時間",
         explainQuery: "說明執行計畫",

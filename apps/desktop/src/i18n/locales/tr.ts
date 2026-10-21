@@ -3308,6 +3308,7 @@ export default withEnglishFallback({
         executeQuery: "Sorgu çalıştır",
         executeSql: "SQL'i çalıştır",
         listTables: "Tabloları listele",
+        searchSchema: "Şemada ara",
         getColumns: "Sütunları al",
         getCurrentTime: "Geçerli saati al",
         explainQuery: "Sorgu planını açıkla",

@@ -4303,6 +4303,7 @@ export default {
         executeQuery: "Execute query",
         executeSql: "Execute SQL",
         listTables: "List tables",
+        searchSchema: "Search schema",
         getColumns: "Get columns",
         getCurrentTime: "Get current time",
         explainQuery: "Explain query plan",

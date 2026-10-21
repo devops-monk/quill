@@ -4214,6 +4214,7 @@ export default withEnglishFallback({
         executeQuery: "เรียกใช้ Query",
         executeSql: "เรียกใช้ SQL",
         listTables: "แสดงรายการตาราง",
+        searchSchema: "ค้นหาสคีมา",
         getColumns: "ดูคอลัมน์",
         getCurrentTime: "ดูเวลาปัจจุบัน",
         explainQuery: "อธิบายแผน Query",

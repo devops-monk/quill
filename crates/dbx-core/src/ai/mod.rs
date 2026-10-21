@@ -8,4 +8,5 @@ pub mod mcp_policy;
 pub mod plugin_tools;
 pub mod prompt_template;
 pub mod skill_tools;
+pub mod text2sql;
 pub mod tool_approval;

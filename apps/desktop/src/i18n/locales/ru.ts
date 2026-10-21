@@ -4015,6 +4015,7 @@ export default withEnglishFallback({
         executeQuery: "Выполнить запрос",
         executeSql: "Выполнить SQL",
         listTables: "Список таблиц",
+        searchSchema: "Поиск по схеме",
         getColumns: "Получить столбцы",
         getCurrentTime: "Получить текущее время",
         explainQuery: "Пояснить план запроса",

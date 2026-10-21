@@ -4107,6 +4107,7 @@ export default withEnglishFallback({
         executeQuery: "Executar consulta",
         executeSql: "Executar SQL",
         listTables: "Listar tabelas",
+        searchSchema: "Pesquisar esquema",
         getColumns: "Obter colunas",
         getCurrentTime: "Obter hora atual",
         explainQuery: "Explicar plano de execução",

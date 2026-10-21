@@ -4231,6 +4231,7 @@ export default withEnglishFallback({
         executeQuery: "执行查询",
         executeSql: "执行 SQL",
         listTables: "列出数据表",
+        searchSchema: "检索相关表",
         getColumns: "读取字段",
         getCurrentTime: "获取当前时间",
         explainQuery: "解释查询计划",

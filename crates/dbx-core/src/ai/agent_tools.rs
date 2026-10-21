@@ -90,6 +90,7 @@ fn tool_uses_database(tool_name: &str) -> bool {
         "list_databases"
             | "list_tables"
             | "get_columns"
+            | "search_schema"
             | "execute_query"
             | "get_sample_data"
             | "list_collections"
@@ -366,8 +367,20 @@ pub fn read_only_tools(db_type: DatabaseType) -> Vec<ToolDefinition> {
     } else if is_vector_db(db_type) {
         vec![list_collections_tool(), get_current_time_tool()]
     } else {
-        vec![list_databases_tool(), list_tables_tool(), get_columns_tool(db_type), get_current_time_tool()]
+        let mut tools = vec![list_databases_tool(), list_tables_tool(), get_columns_tool(db_type)];
+        if supports_schema_search(db_type) {
+            tools.push(search_schema_tool());
+        }
+        tools.push(get_current_time_tool());
+        tools
     }
+}
+
+/// `search_schema` ranks relational tables and follows foreign keys, so it is
+/// offered only where tables, columns and keys exist. Document, key-value and
+/// search engines keep their own discovery tools.
+fn supports_schema_search(db_type: DatabaseType) -> bool {
+    supports_sql_query(db_type) && !matches!(db_type, DatabaseType::MongoDb | DatabaseType::Solr | DatabaseType::Redis)
 }
 
 /// Get all available tool definitions for the given database type.
@@ -381,6 +394,9 @@ pub fn all_tools(db_type: DatabaseType, sql_permissions: AgentSqlPermissions) ->
         return vec![list_collections_tool(), browse_collection_tool(), get_current_time_tool()];
     }
     let mut tools = vec![list_databases_tool(), list_tables_tool(), get_columns_tool(db_type), get_current_time_tool()];
+    if supports_schema_search(db_type) {
+        tools.push(search_schema_tool());
+    }
     if db_type == DatabaseType::MongoDb {
         tools.push(mongo_execute_query_tool(sql_permissions));
     } else if db_type == DatabaseType::Solr {
@@ -565,6 +581,57 @@ fn list_tables_tool() -> ToolDefinition {
         }),
         read_only: true,
         parallel_ok: true,
+    }
+}
+
+/// Default and maximum tables `search_schema` matches before FK expansion.
+const SEARCH_SCHEMA_DEFAULT_TABLES: usize = 8;
+const SEARCH_SCHEMA_MAX_TABLES: usize = 15;
+
+/// Rendered-schema budget for one `search_schema` result. Kept below the agent
+/// loop's 12_000-character tool-result compaction limit so the result is never
+/// cut mid-table.
+const SEARCH_SCHEMA_CHAR_BUDGET: usize = 10_000;
+
+/// search_schema tool definition.
+fn search_schema_tool() -> ToolDefinition {
+    ToolDefinition {
+        name: "search_schema".into(),
+        description: "Find the tables relevant to a natural-language question and return their columns, primary keys \
+             and foreign-key join paths in one call. Use this first when the user asks about data in plain words, \
+             instead of listing every table and fetching columns one by one. Small schemas are returned whole; \
+             for large ones the best-matching tables and the tables needed to join them are returned, followed by \
+             the names of the rest. If a needed table is missing, call again with different wording or use \
+             get_columns on a specific table."
+            .into(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The user's question or the entities it is about, in plain words"
+                },
+                "max_tables": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": SEARCH_SCHEMA_MAX_TABLES,
+                    "description": format!("Tables to match before adding join tables (default {SEARCH_SCHEMA_DEFAULT_TABLES})")
+                },
+                "schema": {
+                    "type": "string",
+                    "description": "Schema to search (optional, defaults to the current schema)"
+                },
+                "database": {
+                    "type": "string",
+                    "description": "Database to search (optional, defaults to the current database)"
+                }
+            },
+            "required": ["question"]
+        }),
+        read_only: true,
+        // Sequential for the same reason as get_columns: it issues metadata
+        // queries that single-connection drivers cannot run concurrently.
+        parallel_ok: false,
     }
 }
 
@@ -807,6 +874,9 @@ pub async fn execute_tool_scoped(
         "list_databases" => execute_list_databases(tool_call, state, connection_id).await,
         "list_tables" => execute_list_tables(tool_call, state, connection_id, database, default_schema, db_type).await,
         "get_columns" => execute_get_columns(tool_call, state, connection_id, database, default_schema, db_type).await,
+        "search_schema" => {
+            execute_search_schema(tool_call, state, connection_id, database, default_schema, db_type).await
+        }
         "execute_query" => {
             execute_execute_query(tool_call, state, connection_id, database, default_schema, db_type, sql_permissions)
                 .await
@@ -1083,6 +1153,99 @@ async fn execute_get_columns(
     }
 
     Ok(docs_notes::guard_untrusted_note_output(lines.join("\n"), notes_applied))
+}
+
+async fn execute_search_schema(
+    tool_call: &ToolCall,
+    state: &Arc<AppState>,
+    connection_id: &str,
+    database: &str,
+    default_schema: Option<&str>,
+    db_type: &DatabaseType,
+) -> Result<String, String> {
+    use crate::ai::text2sql::{linker, schema_source};
+
+    let question = tool_call
+        .arguments
+        .get("question")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|question| !question.is_empty())
+        .ok_or("Missing required parameter: question")?;
+    let max_tables = tool_call
+        .arguments
+        .get("max_tables")
+        .and_then(Value::as_u64)
+        .map(|n| (n as usize).clamp(1, SEARCH_SCHEMA_MAX_TABLES))
+        .unwrap_or(SEARCH_SCHEMA_DEFAULT_TABLES);
+    let database = effective_database(tool_call, database);
+    let schema = effective_schema(tool_call, default_schema).unwrap_or_default();
+
+    let loaded = schema_source::load_for_question(state, connection_id, &database, &schema, question).await?;
+    if loaded.docs.is_empty() {
+        return Ok("No tables found in this database/schema.".to_string());
+    }
+    let mut docs = loaded.docs;
+
+    // The user's local notes override database comments, exactly as in
+    // list_tables/get_columns, and stay wrapped as untrusted data.
+    let (annotations, notes_warning) = match docs_notes::load_connection_annotations(state, connection_id).await {
+        Ok(annotations) => (annotations, None),
+        Err(_error) => (None, Some(docs_notes::notes_unavailable_notice())),
+    };
+    let note_db_type = state.configs.read().await.get(connection_id).map(|config| config.db_type).unwrap_or(*db_type);
+    let mut note_budget = SchemaNoteBudget::new();
+    let mut notes_applied = false;
+    if let Some(annotations) = annotations.as_ref() {
+        for doc in &mut docs {
+            let note = docs_notes::table_note(annotations, note_db_type, Some(schema.as_str()), &doc.name);
+            if let Some(note) = note_budget.take(note, SCHEMA_NOTE_TABLE_MAX_CHARS) {
+                doc.comment = Some(docs_notes::render_untrusted_note(&note));
+                notes_applied = true;
+            }
+            for column in &mut doc.columns {
+                let note =
+                    docs_notes::column_note(annotations, note_db_type, Some(schema.as_str()), &doc.name, &column.name);
+                if let Some(note) = note_budget.take(note, SCHEMA_NOTE_COLUMN_MAX_CHARS) {
+                    column.comment = Some(docs_notes::render_untrusted_note(&note));
+                    notes_applied = true;
+                }
+            }
+        }
+    }
+
+    let index = linker::SchemaIndex::new(docs);
+    let options = linker::LinkOptions { max_tables, char_budget: SEARCH_SCHEMA_CHAR_BUDGET, ..Default::default() };
+    let link = index.link(question, options);
+
+    let mut output = String::new();
+    if link.full_schema {
+        output.push_str(&format!("Full schema ({} tables):\n\n", loaded.total_tables));
+    } else if link.tables.is_empty() {
+        output.push_str(&format!(
+            "No table matched \"{question}\" by name, column or comment among {} tables. \
+             Retry with other wording, or pick from the names below and call get_columns.\n\n",
+            loaded.total_tables
+        ));
+    } else {
+        output.push_str(&format!(
+            "Tables relevant to \"{question}\" ({} of {} tables, best match first):\n\n",
+            link.tables.len(),
+            loaded.total_tables
+        ));
+    }
+    output.push_str(&index.render_link(&link, SEARCH_SCHEMA_CHAR_BUDGET));
+    if loaded.partial && !link.full_schema {
+        output.push_str(
+            "\nNote: this schema is large, so only likely tables were inspected; a table shown \
+             \"columns not loaded\" needs get_columns.\n",
+        );
+    }
+    if let Some(warning) = notes_warning {
+        output.push_str(warning);
+        output.push('\n');
+    }
+    Ok(docs_notes::guard_untrusted_note_output(output, notes_applied))
 }
 
 /// Normalize a SQL string for confirmation comparison.

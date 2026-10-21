@@ -63,6 +63,7 @@ export const STATUS_TOOL_LABEL_KEYS: Record<string, string> = {
   execute_sql: "ai.status.toolLabels.executeSql",
   list_tables: "ai.status.toolLabels.listTables",
   get_columns: "ai.status.toolLabels.getColumns",
+  search_schema: "ai.status.toolLabels.searchSchema",
   get_current_time: "ai.status.toolLabels.getCurrentTime",
   explain_query: "ai.status.toolLabels.explainQuery",
   get_sample_data: "ai.status.toolLabels.getSampleData",

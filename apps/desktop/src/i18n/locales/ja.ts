@@ -4140,6 +4140,7 @@ export default withEnglishFallback({
         executeQuery: "クエリを実行",
         executeSql: "SQL を実行",
         listTables: "テーブル一覧",
+        searchSchema: "スキーマを検索",
         getColumns: "カラムを取得",
         getCurrentTime: "現在時刻を取得",
         explainQuery: "実行計画を説明",

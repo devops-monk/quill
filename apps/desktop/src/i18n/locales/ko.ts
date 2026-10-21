@@ -3854,6 +3854,7 @@ export default withEnglishFallback({
         executeQuery: "쿼리 실행",
         executeSql: "SQL 실행",
         listTables: "테이블 나열",
+        searchSchema: "스키마 검색",
         getColumns: "컬럼 가져오기",
         getCurrentTime: "현재 시간 가져오기",
         explainQuery: "실행 계획 설명",

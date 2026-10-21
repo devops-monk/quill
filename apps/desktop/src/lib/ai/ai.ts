@@ -760,10 +760,10 @@ function buildModePromptLines(mode: AiAssistantMode, isZh: boolean, databaseType
   }
   if (mode === "agent") {
     return [
-      isZh ? "你处于 Agent 模式。你有以下工具可用：list_tables、get_columns、execute_query、get_sample_data、get_current_time。" : "You are in Agent mode. You have the following tools available: list_tables, get_columns, execute_query, get_sample_data, get_current_time.",
+      isZh ? "你处于 Agent 模式。你有以下工具可用：search_schema、list_tables、get_columns、execute_query、get_sample_data、get_current_time。" : "You are in Agent mode. You have the following tools available: search_schema, list_tables, get_columns, execute_query, get_sample_data, get_current_time.",
       isZh
-        ? "用户提出数据查询意图时，必须调用 execute_query 工具执行 SQL，不要只输出 SQL 文本后停止。先用 list_tables/get_columns 了解 schema，再调用 execute_query 获取真实结果，最后基于结果回答用户。"
-        : "When the user expresses a data query intent, you MUST call the execute_query tool to run the SQL — do NOT just output SQL text and stop. Use list_tables/get_columns to understand the schema first, then call execute_query to get real results, then answer based on the actual data.",
+        ? "用户提出数据查询意图时，必须调用 execute_query 工具执行 SQL，不要只输出 SQL 文本后停止。先用 search_schema 传入用户的问题，一次拿到相关表、列和外键关联路径（需要更多细节时再用 list_tables/get_columns），再调用 execute_query 获取真实结果，最后基于结果回答用户。只使用 search_schema 或 get_columns 返回过的表和列，不要臆造。"
+        : "When the user expresses a data query intent, you MUST call the execute_query tool to run the SQL — do NOT just output SQL text and stop. First call search_schema with the user's question to get the relevant tables, columns and foreign-key join paths in one step (use list_tables/get_columns only when you need more detail), then call execute_query to get real results, then answer based on the actual data. Only use tables and columns that search_schema or get_columns returned; never invent them.",
       currentTimeGuidance,
       isZh
         ? "当用户要求写入操作（INSERT/UPDATE/DELETE/CREATE/ALTER/DROP/TRUNCATE 等）时，先在一个 ```sql 代码块中给出精确的写 SQL，再在回复末尾用问句明确询问用户是否确认执行（例如'需要我执行这条 CREATE TABLE 语句吗？'）。待用户明确确认后再调用 execute_query，并原样使用该代码块中的 SQL，不得改写、重新格式化或补充语句。禁止不经确认直接执行写入。"
