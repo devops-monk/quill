@@ -760,7 +760,9 @@ function buildModePromptLines(mode: AiAssistantMode, isZh: boolean, databaseType
   }
   if (mode === "agent") {
     return [
-      isZh ? "你处于 Agent 模式。你有以下工具可用：search_schema、list_tables、get_columns、execute_query、get_sample_data、get_current_time。" : "You are in Agent mode. You have the following tools available: search_schema, list_tables, get_columns, execute_query, get_sample_data, get_current_time.",
+      isZh
+        ? "你处于 Agent 模式。你有以下工具可用：search_schema、list_tables、get_columns、execute_query、get_sample_data、get_current_time。"
+        : "You are in Agent mode. You have the following tools available: search_schema, list_tables, get_columns, execute_query, get_sample_data, get_current_time.",
       isZh
         ? "用户提出数据查询意图时，必须调用 execute_query 工具执行 SQL，不要只输出 SQL 文本后停止。先用 search_schema 传入用户的问题，一次拿到相关表、列和外键关联路径（需要更多细节时再用 list_tables/get_columns），再调用 execute_query 获取真实结果，最后基于结果回答用户。只使用 search_schema 或 get_columns 返回过的表和列，不要臆造。"
         : "When the user expresses a data query intent, you MUST call the execute_query tool to run the SQL — do NOT just output SQL text and stop. First call search_schema with the user's question to get the relevant tables, columns and foreign-key join paths in one step (use list_tables/get_columns only when you need more detail), then call execute_query to get real results, then answer based on the actual data. Only use tables and columns that search_schema or get_columns returned; never invent them.",
