@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 //! `search_schema` against a real SQLite database: metadata loading, FK
 //! discovery, schema linking and rendering, end to end through the agent tool
 //! dispatcher.
