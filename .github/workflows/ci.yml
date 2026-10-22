@@ -37,7 +37,7 @@ jobs:
           cache: pnpm
 
       - name: Install frontend dependencies
-        run: pnpm --filter dbx... install --frozen-lockfile
+        run: pnpm --filter quill... install --frozen-lockfile
 
       - name: Check generated connection types
         run: pnpm check:connection-types
@@ -86,7 +86,7 @@ jobs:
           cache: pnpm
 
       - name: Install frontend dependencies
-        run: pnpm --filter dbx... install --frozen-lockfile
+        run: pnpm --filter quill... install --frozen-lockfile
 
       - name: Type-check frontend
         run: pnpm exec vue-tsc --noEmit --project apps/desktop/tsconfig.json
@@ -119,7 +119,7 @@ jobs:
           cache: pnpm
 
       - name: Install frontend dependencies
-        run: pnpm --filter dbx... install --frozen-lockfile
+        run: pnpm --filter quill... install --frozen-lockfile
 
       - name: Run frontend test shard
         env:
@@ -1427,7 +1427,7 @@ jobs:
           version: 10.34.7
       - name: Install generator dependencies
         if: needs.changes.outputs.rust == 'true'
-        run: pnpm --filter dbx... install --frozen-lockfile --ignore-scripts
+        run: pnpm --filter quill... install --frozen-lockfile --ignore-scripts
       - name: Check generated connection types
         if: needs.changes.outputs.rust == 'true'
         run: node scripts/sync-connection-types.mjs --check
